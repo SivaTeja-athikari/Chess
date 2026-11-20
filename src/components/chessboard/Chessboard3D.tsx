@@ -38,8 +38,8 @@ interface CameraControllerProps {
 
 const CameraController: React.FC<CameraControllerProps> = ({ cameraPreset, controlsRef }) => {
   const { activeCombat, orientation } = useChessStore();
-  const targetCamPos = useRef(new THREE.Vector3(0, 18.0, 20.0));
-  const targetLookAt = useRef(new THREE.Vector3(0, 0.3, 0.2));
+  const targetCamPos = useRef(new THREE.Vector3(0, 8.8, 9.4));
+  const targetLookAt = useRef(new THREE.Vector3(0, 0.25, 0.1));
   const shakeRef = useRef(0);
   const prevCombatId = useRef<string | null>(null);
 
@@ -51,22 +51,22 @@ const CameraController: React.FC<CameraControllerProps> = ({ cameraPreset, contr
   }, [activeCombat]);
 
   useFrame(({ camera }, delta) => {
-    const basePos = new THREE.Vector3(0, 18.0, 20.0);
-    const baseLook = new THREE.Vector3(0, 0.3, 0.2);
+    const basePos = new THREE.Vector3(0, 8.8, 9.4);
+    const baseLook = new THREE.Vector3(0, 0.25, 0.1);
 
     switch (cameraPreset) {
       case 'perspective':
-        basePos.set(0, 18.0, 20.0);
-        baseLook.set(0, 0.3, 0.2);
+        basePos.set(0, 8.8, 9.4);
+        baseLook.set(0, 0.25, 0.1);
         break;
       case 'topdown':
-        basePos.set(0, 24.0, 0.01);
+        basePos.set(0, 10.8, 0.01);
         baseLook.set(0, 0, 0);
         break;
       case 'lowangle':
-        // Grandmaster Broadcast Cinematic Perspective (calibrated for full unclipped piece & edge visibility)
-        basePos.set(6.8, 15.5, 18.8);
-        baseLook.set(0, 0.3, 0.2);
+        // Grandmaster Broadcast Cinematic Perspective
+        basePos.set(3.4, 6.8, 7.8);
+        baseLook.set(0, 0.35, 0.15);
         break;
     }
 
@@ -76,8 +76,8 @@ const CameraController: React.FC<CameraControllerProps> = ({ cameraPreset, contr
       const [bx, , bz] = getCoordsFromSquare(activeCombat.square, orientation);
       const midX = (fx + bx) / 2;
       const midZ = (fz + bz) / 2;
-      targetLookAt.current.set(midX * 0.7, 0.5, midZ * 0.7 + 0.2);
-      targetCamPos.current.set(midX * 0.4 + 5.5, 13.8, midZ * 0.4 + 15.8);
+      targetLookAt.current.set(midX * 0.7, 0.4, midZ * 0.7 + 0.1);
+      targetCamPos.current.set(midX * 0.35 + 2.5, 6.8, midZ * 0.35 + 7.5);
     } else {
       targetLookAt.current.copy(baseLook);
       targetCamPos.current.copy(basePos);
@@ -219,12 +219,12 @@ const Board3DScene: React.FC<Board3DSceneProps> = ({
       <OrbitControls
         ref={controlsRef}
         makeDefault
-        target={[0, 0.4, 0.4]}
+        target={[0, 0.25, 0.1]}
         enablePan={false}
         minPolarAngle={Math.PI / 14}
-        maxPolarAngle={Math.PI / 2.3}
-        minDistance={10}
-        maxDistance={30}
+        maxPolarAngle={Math.PI / 2.2}
+        minDistance={4}
+        maxDistance={18}
         dampingFactor={0.06}
       />
 
@@ -397,7 +397,7 @@ export const Chessboard3D: React.FC = () => {
   const { activeCombat } = useChessStore();
 
   return (
-    <div className="relative aspect-square w-[min(90vw,calc(100vh-245px),580px)] h-[min(90vw,calc(100vh-245px),580px)] xl:w-[min(90vw,calc(100vh-240px),620px)] xl:h-[min(90vw,calc(100vh-240px),620px)] 2xl:w-[min(90vw,calc(100vh-235px),660px)] 2xl:h-[min(90vw,calc(100vh-235px),660px)] rounded-2xl overflow-hidden shadow-luxury border border-amber-900/50 bg-gradient-to-b from-[#12141a] to-[#0a0b0e]">
+    <div className="relative aspect-square w-[min(92vw,calc(100vh-165px),660px)] h-[min(92vw,calc(100vh-165px),660px)] xl:w-[min(92vw,calc(100vh-165px),700px)] xl:h-[min(92vw,calc(100vh-165px),700px)] 2xl:w-[min(92vw,calc(100vh-165px),750px)] 2xl:h-[min(92vw,calc(100vh-165px),750px)] rounded-2xl overflow-hidden shadow-luxury border border-amber-900/50 bg-gradient-to-b from-[#12141a] to-[#0a0b0e]">
       {/* 3D Cinematic Floating Action Badge */}
       {activeCombat && combatProgress !== null && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-200">
@@ -428,7 +428,7 @@ export const Chessboard3D: React.FC = () => {
       >
         <Canvas
           shadows
-          camera={{ position: [0, 18.0, 20.0], fov: 40 }}
+          camera={{ position: [0, 8.8, 9.4], fov: 48 }}
           className="w-full h-full cursor-grab active:cursor-grabbing"
         >
           <Board3DScene

@@ -22,22 +22,28 @@ export const EvaluationBar: React.FC = () => {
     return evalScore > 0 ? `+${val}` : val;
   }, [evalScore]);
 
+  const isWhiteAdvantage = evalScore >= 0;
+
   return (
-    <div className="relative w-7 sm:w-8 flex flex-col items-center h-full select-none justify-between py-1">
-      {/* The Meter Track */}
-      <div className="relative w-3 sm:w-3.5 flex-1 rounded-full overflow-hidden bg-[#181c24] border border-stone-800 shadow-md flex flex-col justify-end">
+    <div className="relative w-6 sm:w-7 h-full flex flex-col items-center select-none py-0.5">
+      {/* The Meter Track (Exact height of board, perfectly aligned) */}
+      <div className="relative w-2.5 sm:w-3 h-full rounded-full overflow-hidden bg-[#181c24] border border-stone-800 shadow-md flex flex-col justify-end">
         {/* White Advantage */}
         <div
           className="w-full bg-gradient-to-t from-stone-200 via-amber-100 to-white transition-all duration-500 ease-out"
           style={{ height: `${percentage}%` }}
         />
-      </div>
 
-      {/* Floating Score Badge (Positioned below the track, never clipped) */}
-      <div className="mt-1.5 flex items-center justify-center shrink-0">
-        <span className="font-mono text-[9px] sm:text-[10px] font-bold text-amber-300 bg-stone-900/90 px-1 py-0.5 rounded border border-amber-400/40 shadow-sm leading-none whitespace-nowrap">
+        {/* Embedded Clean Score Badge Overlaid on the Bar */}
+        <div
+          className={`absolute left-1/2 -translate-x-1/2 px-1 py-0.5 rounded font-mono text-[8px] sm:text-[9px] font-bold shadow-md whitespace-nowrap z-10 transition-all ${
+            isWhiteAdvantage
+              ? 'bottom-1 bg-stone-900/90 text-amber-300 border border-amber-400/40'
+              : 'top-1 bg-stone-900/90 text-stone-200 border border-stone-700'
+          }`}
+        >
           {displayScore}
-        </span>
+        </div>
       </div>
     </div>
   );

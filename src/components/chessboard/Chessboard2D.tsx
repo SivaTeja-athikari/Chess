@@ -95,7 +95,7 @@ export const Chessboard2D: React.FC = () => {
       {/* Outer Metallic Bevel Frame */}
       <div className="relative rounded-xl overflow-hidden border-2 border-[#d4af37]/35 shadow-[inset_0_2px_4px_rgba(255,255,255,0.15),inset_0_-2px_4px_rgba(0,0,0,0.7)]">
         {/* Dynamic Responsive Board Dimensions bound to Viewport Height with Guaranteed Player Card Padding */}
-        <div className="relative aspect-square w-[min(90vw,calc(100vh-245px),580px)] h-[min(90vw,calc(100vh-245px),580px)] xl:w-[min(90vw,calc(100vh-240px),620px)] xl:h-[min(90vw,calc(100vh-240px),620px)] 2xl:w-[min(90vw,calc(100vh-235px),660px)] 2xl:h-[min(90vw,calc(100vh-235px),660px)]">
+        <div className="relative aspect-square w-[min(92vw,calc(100vh-165px),660px)] h-[min(92vw,calc(100vh-165px),660px)] xl:w-[min(92vw,calc(100vh-165px),700px)] xl:h-[min(92vw,calc(100vh-165px),700px)] 2xl:w-[min(92vw,calc(100vh-165px),750px)] 2xl:h-[min(92vw,calc(100vh-165px),750px)]">
           <div className="grid grid-cols-8 grid-rows-8 w-full h-full">
             {displayRanks.map((rank, rankIndex) =>
               displayFiles.map((file, fileIndex) => {

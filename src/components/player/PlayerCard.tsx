@@ -59,18 +59,18 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
 
   return (
     <div
-      className={`relative w-full h-[46px] sm:h-[48px] flex items-center justify-between px-3 sm:px-3.5 rounded-xl transition-all duration-300 shadow-md ${
+      className={`relative w-full h-[38px] sm:h-[40px] flex items-center justify-between px-2.5 sm:px-3 rounded-xl transition-all duration-300 shadow-md ${
         isCurrentTurn
           ? 'glass-panel-gold border-amber-400/50 shadow-gold-glow'
           : 'glass-panel border-stone-800/80'
       }`}
     >
-      {/* Player Identity */}
-      <div className="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-1 mr-2">
-        {/* Avatar */}
+      {/* Player Identity & Inline Captured Pieces */}
+      <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
+        {/* Compact Avatar */}
         <div className="relative shrink-0">
           <div
-            className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center font-bold text-xs shadow-inner transition-transform ${
+            className={`w-6 h-6 sm:w-7 sm:h-7 rounded-lg flex items-center justify-center font-bold text-xs shadow-inner transition-transform ${
               isCurrentTurn ? 'scale-105' : ''
             } ${
               isWhite
@@ -93,37 +93,35 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
           )}
         </div>
 
-        {/* Name, Tag, and Captured */}
-        <div className="flex flex-col justify-center min-w-0 leading-tight">
-          <div className="flex items-center gap-1.5 truncate">
-            <span
-              className={`text-[9px] px-1 py-0.2 rounded font-mono font-bold uppercase shrink-0 ${
-                profile.title === 'GM'
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                  : 'bg-stone-800 text-stone-300 border border-stone-700'
-              }`}
-            >
-              {profile.title || (isWhite ? 'W' : 'B')}
+        {/* Identity & Status */}
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className={`text-[9px] px-1 py-0.2 rounded font-mono font-bold uppercase shrink-0 ${
+              profile.title === 'GM'
+                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                : 'bg-stone-800 text-stone-300 border border-stone-700'
+            }`}
+          >
+            {profile.title || (isWhite ? 'W' : 'B')}
+          </span>
+
+          <span className="font-semibold text-xs sm:text-sm text-stone-100 tracking-tight truncate max-w-[100px] sm:max-w-[160px]">
+            {profile.name}
+          </span>
+
+          <span className="text-[10px] font-mono text-stone-400 shrink-0">
+            ({profile.rating})
+          </span>
+
+          {profile.isAI && isAiThinking && isCurrentTurn && (
+            <span className="hidden sm:flex items-center gap-1 text-[10px] text-amber-400 font-medium animate-pulse ml-1 shrink-0">
+              <BrainCircuit className="w-3 h-3" />
+              Thinking...
             </span>
+          )}
 
-            <span className="font-semibold text-xs sm:text-sm text-stone-100 tracking-tight truncate max-w-[110px] sm:max-w-[170px]">
-              {profile.name}
-            </span>
-
-            <span className="text-[10px] font-mono text-stone-400 shrink-0">
-              ({profile.rating})
-            </span>
-
-            {profile.isAI && isAiThinking && isCurrentTurn && (
-              <span className="hidden sm:flex items-center gap-1 text-[10px] text-amber-400 font-medium animate-pulse ml-1 shrink-0">
-                <BrainCircuit className="w-3 h-3" />
-                Thinking...
-              </span>
-            )}
-          </div>
-
-          {/* Captured Pieces List (Single compact row) */}
-          <div className="flex items-center gap-1 h-3.5 mt-0.5 overflow-hidden">
+          {/* Inline Captured Pieces Badges */}
+          <div className="hidden md:flex items-center gap-0.5 ml-1 overflow-hidden shrink-0">
             {(Object.keys(groupedCaptured) as PieceType[]).map((type) => (
               <div
                 key={type}
@@ -151,7 +149,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
       {/* Clock Display Badge */}
       {timeLimit !== null && (
         <div
-          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-xs sm:text-sm font-extrabold border transition-colors shadow-inner shrink-0 ${
+          className={`flex items-center gap-1.5 px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-lg font-mono text-xs sm:text-sm font-extrabold border transition-colors shadow-inner shrink-0 ${
             isLowTime
               ? 'bg-red-950/80 border-red-500 text-red-400 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.3)]'
               : isCurrentTurn

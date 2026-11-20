@@ -69,9 +69,9 @@ export const App: React.FC = () => {
           </div>
 
           {/* Center Column: Grandmaster Chess Arena (Hero Board + Integrated Player Cards) */}
-          <div className="flex flex-col items-center justify-center shrink-0 space-y-1 sm:space-y-1.5 py-0.5">
+          <div className="flex flex-col items-center justify-center shrink-0 space-y-1 py-0.5">
             {/* Top Opponent Player Card */}
-            <div className="w-[min(90vw,calc(100vh-245px),580px)] xl:w-[min(90vw,calc(100vh-240px),620px)] 2xl:w-[min(90vw,calc(100vh-235px),660px)]">
+            <div className="w-[min(92vw,calc(100vh-165px),660px)] xl:w-[min(92vw,calc(100vh-165px),700px)] 2xl:w-[min(92vw,calc(100vh-165px),750px)]">
               <PlayerCard
                 color={topColor}
                 profile={topPlayer}
@@ -106,7 +106,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Bottom Player Card */}
-            <div className="w-[min(90vw,calc(100vh-245px),580px)] xl:w-[min(90vw,calc(100vh-240px),620px)] 2xl:w-[min(90vw,calc(100vh-235px),660px)]">
+            <div className="w-[min(92vw,calc(100vh-165px),660px)] xl:w-[min(92vw,calc(100vh-165px),700px)] 2xl:w-[min(92vw,calc(100vh-165px),750px)]">
               <PlayerCard
                 color={bottomColor}
                 profile={bottomPlayer}
@@ -116,7 +116,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Right Column: Spacious Game Studio & Notation Timeline */}
-          <div className="w-full max-w-[min(90vw,580px)] lg:w-[330px] xl:w-[360px] 2xl:w-[390px] shrink-0 h-[min(90vw,calc(100vh-90px),720px)] flex flex-col gap-2 py-1">
+          <div className="w-full max-w-[min(92vw,660px)] lg:w-[330px] xl:w-[360px] 2xl:w-[390px] shrink-0 h-[min(90vw,calc(100vh-90px),720px)] flex flex-col gap-2 py-1">
             {/* Control Bar (Zero-overflow 2-tier toolbar) */}
             <ControlBar onOpenSettings={() => setIsSettingsOpen(true)} />
 
