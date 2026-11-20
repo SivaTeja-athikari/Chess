@@ -45,17 +45,17 @@ export const ControlBar: React.FC<ControlBarProps> = ({ onOpenSettings }) => {
 
   return (
     <div className="w-full p-2.5 rounded-2xl glass-panel border border-stone-800/80 shadow-xl flex flex-col gap-2">
-      {/* Row 1: Primary Match Actions (Undo, Reset, Flip, Resign) */}
-      <div className={`grid ${gameMode === 'pvp-online' ? 'grid-cols-3' : 'grid-cols-4'} gap-2`}>
-        {/* Undo (Disabled & Removed in Online Multiplayer) */}
-        {gameMode !== 'pvp-online' && (
+      {/* Row 1: Primary Match Actions (Undo only in vs Computer AI, Reset, Flip, Resign) */}
+      <div className={`grid ${gameMode === 'pve' ? 'grid-cols-4' : 'grid-cols-3'} gap-2`}>
+        {/* Undo (Only available vs Computer AI) */}
+        {gameMode === 'pve' && (
           <motion.button
             whileHover={{ scale: 1.03 }}
             whileTap={{ scale: 0.97 }}
             onClick={undoMove}
             disabled={history.length === 0}
             className="flex items-center justify-center gap-1.5 py-2 px-2 rounded-xl bg-stone-900/90 hover:bg-stone-800 text-stone-300 hover:text-white border border-stone-800 text-xs font-semibold disabled:opacity-30 disabled:hover:bg-stone-900/90 transition-all"
-            title="Takeback Move"
+            title="Takeback Move (vs AI)"
           >
             <Undo2 className="w-3.5 h-3.5 text-amber-400 shrink-0" />
             <span>Undo</span>

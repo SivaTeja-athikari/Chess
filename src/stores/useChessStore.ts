@@ -613,9 +613,9 @@ export const useChessStore = create<ChessState>((set, get) => {
 
     undoMove: () => {
       const { game, history, gameMode } = get();
-      if (history.length === 0 || gameMode === 'pvp-online') return;
+      if (history.length === 0 || gameMode !== 'pve') return;
 
-      const stepsToUndo = gameMode === 'pve' && history.length >= 2 ? 2 : 1;
+      const stepsToUndo = history.length >= 2 ? 2 : 1;
 
       for (let i = 0; i < stepsToUndo; i++) {
         game.undo();
