@@ -102,7 +102,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
     setStatusMessage('Connecting to host room...');
 
     try {
-      const code = joinCodeInput.trim().toUpperCase();
+      const code = joinCodeInput.toUpperCase().replace(/\s+/g, '');
       const success = await joinMultiplayerRoom(code);
       if (success) {
         confetti({ particleCount: 80, spread: 65, origin: { y: 0.6 } });
@@ -293,7 +293,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
                   maxLength={10}
                   placeholder="e.g. GM-4821"
                   value={joinCodeInput}
-                  onChange={(e) => setJoinCodeInput(e.target.value)}
+                  onChange={(e) => setJoinCodeInput(e.target.value.toUpperCase().replace(/\s+/g, ''))}
                   className="w-full py-3.5 px-4 rounded-xl bg-stone-900 border border-stone-700 text-center font-mono text-xl font-bold uppercase tracking-widest text-sky-300 placeholder:text-stone-600 focus:outline-none focus:border-sky-400 transition-colors"
                 />
               </div>

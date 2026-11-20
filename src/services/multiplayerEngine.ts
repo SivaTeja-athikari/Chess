@@ -1,5 +1,5 @@
-import { Peer, DataConnection } from 'peerjs';
 import { Square, PieceType, Color } from '../types/chess';
+import { MqttRelay, MqttMessage } from './mqttRelay';
 
 export type MultiplayerPayload =
   | { type: 'HANDSHAKE'; name: string; color: Color; timeLimit: number }
@@ -34,38 +34,27 @@ interface MultiplayerCallbacks {
   onError?: (error: string) => void;
 }
 
-const GOOGLE_ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-  { urls: 'stun:stun2.l.google.com:19302' },
-  { urls: 'stun:stun3.l.google.com:19302' },
-  { urls: 'stun:stun4.l.google.com:19302' },
-  { urls: 'stun:global.stun.twilio.com:3478' },
-];
-
 class MultiplayerEngine {
-  private peer: Peer | null = null;
-  private conn: DataConnection | null = null;
+  private mqtt: MqttRelay = new MqttRelay();
   private localChannel: BroadcastChannel | null = null;
   private callbacks: MultiplayerCallbacks = {};
   private roomCode: string | null = null;
   private isHost: boolean = false;
+  private isConnected: boolean = false;
   private isConnecting: boolean = false;
-  private activeTransport: 'local' | 'webrtc' | null = null;
-  private pingInterval: any = null;
-
-  private formatPeerId(code: string): string {
-    const clean = code.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    return `ownone-chess-v2-${clean}`;
-  }
+  private handshakeTimer: any = null;
 
   public setCallbacks(callbacks: MultiplayerCallbacks) {
     this.callbacks = { ...this.callbacks, ...callbacks };
   }
 
+  private cleanRoomCode(code: string): string {
+    return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
   /**
-   * Host creates a room code and listens for incoming connections
-   * Supports both native Local BroadcastChannel (instant multi-tab) and WebRTC (cross-device)
+   * Host initializes a room and waits for guest connection
+   * Connects to both global zero-account WebSocket relay and local BroadcastChannel
    */
   public async createRoom(
     code: string,
@@ -79,65 +68,36 @@ class MultiplayerEngine {
     this.roomCode = code.trim().toUpperCase();
     this.isHost = true;
     this.isConnecting = true;
-    const clean = this.roomCode.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const clean = this.cleanRoomCode(this.roomCode);
+    const topic = `ownone/chess/v4/${clean}`;
 
-    // 1. Initialize Local High-Speed BroadcastChannel
+    // 1. Initialize Local BroadcastChannel for same-device instant testing
     try {
       if (typeof BroadcastChannel !== 'undefined') {
         this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
         this.localChannel.onmessage = (event) => {
-          this.handleLocalMessage(event.data, playerName);
+          this.handleIncomingPayload(event.data, playerName, 'local');
         };
       }
-    } catch (e) {
-      console.warn('BroadcastChannel not available:', e);
+    } catch {}
+
+    // 2. Connect to Free Global Cloud WebSocket Relay (HiveMQ / EMQX)
+    try {
+      await this.mqtt.connect(topic, (msg: MqttMessage) => {
+        this.handleIncomingPayload(msg as any, playerName, 'cloud');
+      });
+      this.isConnecting = false;
+    } catch (err) {
+      console.warn('Cloud relay warning:', err);
+      this.isConnecting = false;
     }
 
-    // 2. Initialize WebRTC P2P Peer
-    return new Promise((resolve) => {
-      try {
-        const peerId = this.formatPeerId(this.roomCode!);
-        this.peer = new Peer(peerId, {
-          debug: 1,
-          config: {
-            iceServers: GOOGLE_ICE_SERVERS,
-          },
-        });
-
-        this.peer.on('open', () => {
-          this.isConnecting = false;
-          resolve(this.roomCode!);
-        });
-
-        this.peer.on('connection', (connection) => {
-          this.conn = connection;
-          this.activeTransport = 'webrtc';
-          this.setupWebRTCConnection(playerName, timeLimit);
-        });
-
-        this.peer.on('error', (err) => {
-          console.warn('PeerJS host notice:', err.type, err.message);
-          // If PeerJS server is blocked/offline, local channel still works
-          this.isConnecting = false;
-          resolve(this.roomCode!);
-        });
-      } catch (err: any) {
-        console.warn('Peer init error:', err);
-        this.isConnecting = false;
-        resolve(this.roomCode!);
-      }
-
-      // Safety timeout: resolve within 2.5s regardless so UI is never blocked
-      setTimeout(() => {
-        this.isConnecting = false;
-        resolve(this.roomCode!);
-      }, 2500);
-    });
+    return this.roomCode;
   }
 
   /**
-   * Guest joins an existing room
-   * Attempts connection over both Local BroadcastChannel and WebRTC with strict timeout
+   * Guest joins an existing room by code
+   * Connects to global cloud WebSocket relay and local BroadcastChannel with handshake
    */
   public async joinRoom(
     code: string,
@@ -150,180 +110,123 @@ class MultiplayerEngine {
     this.roomCode = code.trim().toUpperCase();
     this.isHost = false;
     this.isConnecting = true;
-    const clean = this.roomCode.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const clean = this.cleanRoomCode(this.roomCode);
+    const topic = `ownone/chess/v4/${clean}`;
 
-    return new Promise((resolve, reject) => {
-      let resolved = false;
+    return new Promise(async (resolve, reject) => {
+      let connected = false;
 
-      const finishSuccess = (transport: 'local' | 'webrtc', hostName: string) => {
-        if (resolved) return;
-        resolved = true;
+      const finishSuccess = (hostName: string) => {
+        if (connected) return;
+        connected = true;
+        this.isConnected = true;
         this.isConnecting = false;
-        this.activeTransport = transport;
+        if (this.handshakeTimer) clearInterval(this.handshakeTimer);
         this.callbacks.onConnected?.(this.roomCode!, hostName || 'Host Grandmaster', 'guest');
         resolve(true);
       };
 
       const finishError = (message: string) => {
-        if (resolved) return;
-        resolved = true;
+        if (connected) return;
+        connected = true;
         this.isConnecting = false;
+        if (this.handshakeTimer) clearInterval(this.handshakeTimer);
         this.callbacks.onError?.(message);
         reject(new Error(message));
       };
 
-      // 1. Local BroadcastChannel Handshake
+      // 1. Setup Local BroadcastChannel for local/multi-tab connection
       try {
         if (typeof BroadcastChannel !== 'undefined') {
           this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
           this.localChannel.onmessage = (event) => {
             const data = event.data as MultiplayerPayload;
             if (data?.type === 'HANDSHAKE_ACK') {
-              finishSuccess('local', data.name);
+              finishSuccess(data.name);
             } else {
               this.dispatchPayload(data);
             }
           };
-
-          // Send handshake ping immediately and retry every 400ms for 3 attempts
-          const sendLocalPing = () => {
-            if (resolved) return;
-            try {
-              this.localChannel?.postMessage({
-                type: 'HANDSHAKE',
-                name: playerName,
-                color: 'b',
-                timeLimit: 600,
-              } as MultiplayerPayload);
-            } catch {}
-          };
-
-          sendLocalPing();
-          setTimeout(sendLocalPing, 400);
-          setTimeout(sendLocalPing, 800);
         }
-      } catch (e) {
-        console.warn('BroadcastChannel error:', e);
-      }
+      } catch {}
 
-      // 2. WebRTC P2P Connection
+      // 2. Connect to Cloud WebSocket Relay
       try {
-        this.peer = new Peer({
-          debug: 1,
-          config: {
-            iceServers: GOOGLE_ICE_SERVERS,
-          },
-        });
-
-        this.peer.on('open', () => {
-          if (resolved) return;
-          const targetPeerId = this.formatPeerId(this.roomCode!);
-          const connection = this.peer!.connect(targetPeerId, {
-            reliable: true,
-          });
-
-          this.conn = connection;
-
-          connection.on('open', () => {
-            this.setupWebRTCConnection(playerName, 600);
-            // Send Handshake
-            connection.send({
-              type: 'HANDSHAKE',
-              name: playerName,
-              color: 'b',
-              timeLimit: 600,
-            } as MultiplayerPayload);
-            finishSuccess('webrtc', 'Host Grandmaster');
-          });
-
-          connection.on('error', (err) => {
-            console.warn('WebRTC conn error:', err);
-          });
-        });
-
-        this.peer.on('error', (err) => {
-          console.warn('PeerJS guest error:', err.type, err.message);
-          if (err.type === 'peer-unavailable') {
-            // Target host peer not found on WebRTC broker
-            if (!resolved && this.activeTransport !== 'local') {
-              finishError(`Room "${code}" was not found. Verify the code and ensure host is waiting.`);
-            }
+        await this.mqtt.connect(topic, (msg: MqttMessage) => {
+          const payload = msg as any as MultiplayerPayload;
+          if (payload?.type === 'HANDSHAKE_ACK') {
+            finishSuccess(payload.name);
+          } else {
+            this.dispatchPayload(payload);
           }
         });
-      } catch (err: any) {
-        console.warn('Guest peer init error:', err);
+      } catch (err) {
+        console.warn('MQTT connect error:', err);
       }
 
-      // 3. Strict 6-second timeout watchdog (prevents infinite loading spinner)
+      // 3. Send Handshake ping immediately and retry every 600ms
+      const sendHandshake = () => {
+        if (connected) return;
+        const handshakePayload: MultiplayerPayload = {
+          type: 'HANDSHAKE',
+          name: playerName,
+          color: 'b',
+          timeLimit: 600,
+        };
+
+        // Send over local channel
+        try {
+          this.localChannel?.postMessage(handshakePayload);
+        } catch {}
+
+        // Send over cloud relay
+        this.mqtt.publish(handshakePayload);
+      };
+
+      sendHandshake();
+      this.handshakeTimer = setInterval(sendHandshake, 600);
+
+      // 4. Watchdog: abort after 7 seconds if no response from host
       setTimeout(() => {
-        if (!resolved) {
-          if (this.activeTransport === 'local') {
-            finishSuccess('local', 'Host Grandmaster');
-          } else {
-            finishError(`Connection timed out for room "${code}". Ensure the host has created the room.`);
-          }
+        if (!connected) {
+          finishError(`Could not find active host in room "${code}". Ensure the host has created the room.`);
         }
-      }, 6000);
+      }, 7000);
     });
   }
 
-  private handleLocalMessage(msg: MultiplayerPayload, myName: string) {
+  private handleIncomingPayload(
+    msg: MultiplayerPayload,
+    myPlayerName: string,
+    source: 'local' | 'cloud'
+  ) {
     if (!msg || !msg.type) return;
 
     if (msg.type === 'HANDSHAKE') {
       if (this.isHost) {
-        this.activeTransport = 'local';
-        this.localChannel?.postMessage({
+        this.isConnected = true;
+        // Host sends HANDSHAKE_ACK back to guest
+        const ackPayload: MultiplayerPayload = {
           type: 'HANDSHAKE_ACK',
-          name: myName,
+          name: myPlayerName,
           color: 'w',
-        } as MultiplayerPayload);
+        };
+
+        if (source === 'local') {
+          try {
+            this.localChannel?.postMessage(ackPayload);
+          } catch {}
+        }
+        this.mqtt.publish(ackPayload);
+
         this.callbacks.onConnected?.(this.roomCode!, msg.name, 'host');
       }
     } else if (msg.type === 'HANDSHAKE_ACK') {
-      this.activeTransport = 'local';
+      this.isConnected = true;
       this.callbacks.onConnected?.(this.roomCode!, msg.name, 'guest');
     } else {
       this.dispatchPayload(msg);
     }
-  }
-
-  private setupWebRTCConnection(playerName: string, timeLimit: number) {
-    if (!this.conn) return;
-
-    this.conn.on('data', (data: any) => {
-      const msg = data as MultiplayerPayload;
-      if (!msg || !msg.type) return;
-
-      if (msg.type === 'HANDSHAKE') {
-        if (this.isHost && this.conn && this.conn.open) {
-          this.conn.send({
-            type: 'HANDSHAKE_ACK',
-            name: playerName,
-            color: 'w',
-          } as MultiplayerPayload);
-          this.callbacks.onConnected?.(this.conn.peer, msg.name, 'host');
-        }
-      } else if (msg.type === 'HANDSHAKE_ACK') {
-        if (this.conn) {
-          this.callbacks.onConnected?.(this.conn.peer, msg.name, 'guest');
-        }
-      } else {
-        this.dispatchPayload(msg);
-      }
-    });
-
-    this.conn.on('close', () => {
-      if (this.activeTransport === 'webrtc') {
-        this.callbacks.onDisconnected?.('Opponent disconnected from the match.');
-        this.conn = null;
-        this.activeTransport = null;
-      }
-    });
-
-    this.conn.on('error', (err) => {
-      console.warn('WebRTC data channel notice:', err?.message);
-    });
   }
 
   private dispatchPayload(msg: MultiplayerPayload) {
@@ -352,21 +255,14 @@ class MultiplayerEngine {
     }
   }
 
-  /**
-   * Broadcast payload over active transport (Local or WebRTC)
-   */
   private sendPayload(payload: MultiplayerPayload) {
-    // 1. Send via Local BroadcastChannel
+    // 1. Broadcast locally (for multi-tab / same browser testing)
     try {
       this.localChannel?.postMessage(payload);
     } catch {}
 
-    // 2. Send via WebRTC DataConnection
-    try {
-      if (this.conn && this.conn.open) {
-        this.conn.send(payload);
-      }
-    } catch {}
+    // 2. Broadcast over global cloud relay (for phones, remote PCs, etc.)
+    this.mqtt.publish(payload);
   }
 
   public sendMove(
@@ -408,39 +304,25 @@ class MultiplayerEngine {
   }
 
   public leaveRoom() {
+    if (this.handshakeTimer) {
+      clearInterval(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
     if (this.localChannel) {
       try {
         this.localChannel.close();
       } catch {}
       this.localChannel = null;
     }
-    if (this.conn) {
-      try {
-        this.conn.close();
-      } catch {}
-      this.conn = null;
-    }
-    if (this.peer) {
-      try {
-        this.peer.destroy();
-      } catch {}
-      this.peer = null;
-    }
-    if (this.pingInterval) {
-      clearInterval(this.pingInterval);
-      this.pingInterval = null;
-    }
+    this.mqtt.disconnect();
     this.roomCode = null;
     this.isHost = false;
+    this.isConnected = false;
     this.isConnecting = false;
-    this.activeTransport = null;
   }
 
-  public isConnected(): boolean {
-    return Boolean(
-      (this.localChannel && this.activeTransport === 'local') ||
-      (this.conn && this.conn.open)
-    );
+  public getIsConnected(): boolean {
+    return this.isConnected;
   }
 
   public getRoomCode(): string | null {
@@ -449,10 +331,6 @@ class MultiplayerEngine {
 
   public getIsHost(): boolean {
     return this.isHost;
-  }
-
-  public getTransportType(): 'local' | 'webrtc' | null {
-    return this.activeTransport;
   }
 }
 
