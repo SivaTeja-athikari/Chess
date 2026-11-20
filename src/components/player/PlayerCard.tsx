@@ -59,7 +59,7 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
 
   return (
     <div
-      className={`relative flex items-center justify-between py-1.5 sm:py-2 px-3 sm:px-4 rounded-xl transition-all duration-300 ${
+      className={`relative flex items-center justify-between py-1.5 px-3 sm:px-4 rounded-xl transition-all duration-300 shadow-md ${
         isCurrentTurn
           ? 'glass-panel-gold border-amber-400/50 shadow-gold-glow'
           : 'glass-panel border-stone-800/80'
@@ -149,16 +149,16 @@ export const PlayerCard: React.FC<PlayerCardProps> = ({
       {/* Clock */}
       {timeLimit !== null && (
         <div
-          className={`flex items-center gap-1 px-2.5 py-1 rounded-lg font-mono text-sm sm:text-base font-bold border transition-colors shadow-inner ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-lg font-mono text-sm sm:text-base font-extrabold border transition-colors shadow-inner shrink-0 ${
             isLowTime
-              ? 'bg-red-950/70 border-red-500 text-red-400 animate-pulse'
+              ? 'bg-red-950/80 border-red-500 text-red-400 animate-pulse shadow-[0_0_12px_rgba(239,68,68,0.3)]'
               : isCurrentTurn
-              ? 'bg-amber-950/40 border-amber-500/50 text-amber-300'
-              : 'bg-stone-900/80 border-stone-800 text-stone-400'
+              ? 'bg-amber-950/50 border-amber-500/60 text-amber-300 shadow-[0_0_12px_rgba(245,158,11,0.2)]'
+              : 'bg-stone-900/90 border-stone-800 text-stone-200'
           }`}
         >
-          <Clock className={`w-3.5 h-3.5 ${isLowTime ? 'text-red-400' : 'text-amber-400'}`} />
-          <span>{formatTime(timeRemaining)}</span>
+          <Clock className={`w-4 h-4 ${isLowTime ? 'text-red-400' : 'text-amber-400'}`} />
+          <span className="tracking-wider">{formatTime(timeRemaining)}</span>
         </div>
       )}
     </div>

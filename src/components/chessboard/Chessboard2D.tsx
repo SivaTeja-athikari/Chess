@@ -82,8 +82,8 @@ export const Chessboard2D: React.FC = () => {
     <div className="relative p-1.5 sm:p-2.5 rounded-2xl shadow-luxury bg-gradient-to-br from-[#2a1e14] via-[#1a140f] to-[#0d0a08] border border-amber-900/50">
       {/* Outer Metallic Bevel Frame */}
       <div className="relative rounded-xl overflow-hidden border-2 border-[#d4af37]/35 shadow-[inset_0_2px_4px_rgba(255,255,255,0.15),inset_0_-2px_4px_rgba(0,0,0,0.7)]">
-        {/* Dynamic Responsive Board Dimensions bound to Viewport Height */}
-        <div className="relative aspect-square w-[min(92vw,calc(100vh-170px),720px)] h-[min(92vw,calc(100vh-170px),720px)] xl:w-[min(92vw,calc(100vh-160px),760px)] xl:h-[min(92vw,calc(100vh-160px),760px)] 2xl:w-[min(92vw,calc(100vh-150px),800px)] 2xl:h-[min(92vw,calc(100vh-150px),800px)]">
+        {/* Dynamic Responsive Board Dimensions bound to Viewport Height with Guaranteed Player Card Padding */}
+        <div className="relative aspect-square w-[min(90vw,calc(100vh-215px),640px)] h-[min(90vw,calc(100vh-215px),640px)] xl:w-[min(90vw,calc(100vh-205px),680px)] xl:h-[min(90vw,calc(100vh-205px),680px)] 2xl:w-[min(90vw,calc(100vh-195px),720px)] 2xl:h-[min(90vw,calc(100vh-195px),720px)]">
           <div className="grid grid-cols-8 grid-rows-8 w-full h-full">
             {displayRanks.map((rank, rankIndex) =>
               displayFiles.map((file, fileIndex) => {

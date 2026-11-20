@@ -60,18 +60,18 @@ export const App: React.FC = () => {
       />
 
       {/* Main Full-Width Studio Layout */}
-      <main className="flex-1 h-[calc(100vh-3.5rem)] overflow-y-auto lg:overflow-hidden p-2 sm:p-3 lg:p-4 flex items-center justify-center">
-        <div className="w-full max-w-[1780px] h-full flex flex-col lg:flex-row items-center justify-center gap-3 lg:gap-4 xl:gap-6 2xl:gap-8">
+      <main className="flex-1 h-[calc(100vh-3.5rem)] overflow-y-auto lg:overflow-hidden p-1.5 sm:p-2 lg:p-2.5 flex items-center justify-center">
+        <div className="w-full max-w-[1780px] h-full flex flex-col lg:flex-row items-center justify-center gap-3 lg:gap-4 xl:gap-5 2xl:gap-6">
           
           {/* Left Column: Match Intel, Opening Theory & Material Balance (Desktop >= 1024px) */}
-          <div className="hidden lg:flex w-[260px] xl:w-[300px] 2xl:w-[340px] shrink-0 h-[min(92vw,calc(100vh-100px),820px)] flex-col justify-between py-1">
+          <div className="hidden lg:flex w-[260px] xl:w-[290px] 2xl:w-[320px] shrink-0 h-[min(90vw,calc(100vh-100px),760px)] flex-col justify-between py-1">
             <MatchIntelPanel />
           </div>
 
           {/* Center Column: Grandmaster Chess Arena (Hero Board + Integrated Player Cards) */}
-          <div className="flex flex-col items-center justify-center shrink-0 space-y-1.5 sm:space-y-2">
+          <div className="flex flex-col items-center justify-center shrink-0 space-y-1 sm:space-y-1.5 py-0.5">
             {/* Top Opponent Player Card */}
-            <div className="w-[min(92vw,calc(100vh-170px),720px)] xl:w-[min(92vw,calc(100vh-160px),760px)] 2xl:w-[min(92vw,calc(100vh-150px),800px)]">
+            <div className="w-[min(90vw,calc(100vh-215px),640px)] xl:w-[min(90vw,calc(100vh-205px),680px)] 2xl:w-[min(90vw,calc(100vh-195px),720px)]">
               <PlayerCard
                 color={topColor}
                 profile={topPlayer}
@@ -86,7 +86,7 @@ export const App: React.FC = () => {
                   initial={{ opacity: 0, y: -6 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -6 }}
-                  className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-950/80 border border-red-500/60 text-red-300 text-xs font-semibold shadow-crimson-glow"
+                  className="flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-red-950/80 border border-red-500/60 text-red-300 text-xs font-semibold shadow-crimson-glow"
                 >
                   <ShieldAlert className="w-3.5 h-3.5 text-red-400 animate-bounce" />
                   <span>Check!</span>
@@ -106,7 +106,7 @@ export const App: React.FC = () => {
             </div>
 
             {/* Bottom Player Card */}
-            <div className="w-[min(92vw,calc(100vh-170px),720px)] xl:w-[min(92vw,calc(100vh-160px),760px)] 2xl:w-[min(92vw,calc(100vh-150px),800px)]">
+            <div className="w-[min(90vw,calc(100vh-215px),640px)] xl:w-[min(90vw,calc(100vh-205px),680px)] 2xl:w-[min(90vw,calc(100vh-195px),720px)]">
               <PlayerCard
                 color={bottomColor}
                 profile={bottomPlayer}
@@ -116,7 +116,7 @@ export const App: React.FC = () => {
           </div>
 
           {/* Right Column: Spacious Game Studio & Notation Timeline */}
-          <div className="w-full max-w-[min(92vw,720px)] lg:w-[340px] xl:w-[380px] 2xl:w-[420px] shrink-0 h-[min(92vw,calc(100vh-100px),820px)] flex flex-col gap-2.5 py-1">
+          <div className="w-full max-w-[min(90vw,640px)] lg:w-[330px] xl:w-[360px] 2xl:w-[390px] shrink-0 h-[min(90vw,calc(100vh-100px),760px)] flex flex-col gap-2 py-1">
             {/* Control Bar (Zero-overflow 2-tier toolbar) */}
             <ControlBar onOpenSettings={() => setIsSettingsOpen(true)} />
 
