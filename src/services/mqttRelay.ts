@@ -145,7 +145,7 @@ export class MqttRelay {
         this.ws.onopen = () => {
           // Send MQTT CONNECT packet
           const connectPacket = createConnectPacket(this.clientId);
-          this.ws?.send(connectPacket);
+          this.sendRaw(connectPacket);
         };
 
         this.ws.onmessage = (event) => {
@@ -160,7 +160,7 @@ export class MqttRelay {
             // Send SUBSCRIBE packet to the room topic
             if (this.currentTopic) {
               const subPacket = createSubscribePacket(this.currentTopic, 1);
-              this.ws?.send(subPacket);
+              this.sendRaw(subPacket);
             }
 
             // Start heartbeat ping every 25 seconds
@@ -228,19 +228,24 @@ export class MqttRelay {
 
       const payload = JSON.stringify(fullMessage);
       const packet = createPublishPacket(this.currentTopic, payload);
-      this.ws.send(packet);
+      this.sendRaw(packet);
     } catch (err) {
       console.warn('Publish error:', err);
+    }
+  }
+
+  private sendRaw(data: Uint8Array) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer;
+      this.ws.send(buffer);
     }
   }
 
   private startPing() {
     this.stopPing();
     this.pingTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        // MQTT PINGREQ packet (0xc0, 0x00)
-        this.ws.send(new Uint8Array([0xc0, 0x00]));
-      }
+      // MQTT PINGREQ packet (0xc0, 0x00)
+      this.sendRaw(new Uint8Array([0xc0, 0x00]));
     }, 25000);
   }
 
@@ -256,9 +261,7 @@ export class MqttRelay {
     if (this.ws) {
       try {
         // Send DISCONNECT packet (0xe0, 0x00)
-        if (this.ws.readyState === WebSocket.OPEN) {
-          this.ws.send(new Uint8Array([0xe0, 0x00]));
-        }
+        this.sendRaw(new Uint8Array([0xe0, 0x00]));
         this.ws.close();
       } catch {}
       this.ws = null;
