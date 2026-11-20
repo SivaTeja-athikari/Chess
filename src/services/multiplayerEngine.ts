@@ -15,7 +15,8 @@ export type MultiplayerPayload =
   | { type: 'SYNC_CLOCK'; whiteTime: number; blackTime: number }
   | { type: 'RESIGN'; color: Color }
   | { type: 'RESTART' }
-  | { type: 'PING' };
+  | { type: 'PING' }
+  | { type: 'PONG' };
 
 interface MultiplayerCallbacks {
   onConnected?: (peerId: string, opponentName: string, role: 'host' | 'guest') => void;
@@ -33,17 +34,29 @@ interface MultiplayerCallbacks {
   onError?: (error: string) => void;
 }
 
+const GOOGLE_ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' },
+  { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun3.l.google.com:19302' },
+  { urls: 'stun:stun4.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+];
+
 class MultiplayerEngine {
   private peer: Peer | null = null;
   private conn: DataConnection | null = null;
+  private localChannel: BroadcastChannel | null = null;
   private callbacks: MultiplayerCallbacks = {};
   private roomCode: string | null = null;
   private isHost: boolean = false;
   private isConnecting: boolean = false;
+  private activeTransport: 'local' | 'webrtc' | null = null;
+  private pingInterval: any = null;
 
   private formatPeerId(code: string): string {
     const clean = code.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    return `ownone-chess-${clean}`;
+    return `ownone-chess-v2-${clean}`;
   }
 
   public setCallbacks(callbacks: MultiplayerCallbacks) {
@@ -51,7 +64,8 @@ class MultiplayerEngine {
   }
 
   /**
-   * Host creates a room code and waits for a guest to connect
+   * Host creates a room code and listens for incoming connections
+   * Supports both native Local BroadcastChannel (instant multi-tab) and WebRTC (cross-device)
    */
   public async createRoom(
     code: string,
@@ -62,47 +76,68 @@ class MultiplayerEngine {
     this.leaveRoom();
     if (callbacks) this.callbacks = { ...this.callbacks, ...callbacks };
 
-    this.roomCode = code;
+    this.roomCode = code.trim().toUpperCase();
     this.isHost = true;
     this.isConnecting = true;
+    const clean = this.roomCode.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-    return new Promise((resolve, reject) => {
+    // 1. Initialize Local High-Speed BroadcastChannel
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
+        this.localChannel.onmessage = (event) => {
+          this.handleLocalMessage(event.data, playerName);
+        };
+      }
+    } catch (e) {
+      console.warn('BroadcastChannel not available:', e);
+    }
+
+    // 2. Initialize WebRTC P2P Peer
+    return new Promise((resolve) => {
       try {
-        const peerId = this.formatPeerId(code);
+        const peerId = this.formatPeerId(this.roomCode!);
         this.peer = new Peer(peerId, {
           debug: 1,
+          config: {
+            iceServers: GOOGLE_ICE_SERVERS,
+          },
         });
 
-        this.peer.on('open', (id) => {
+        this.peer.on('open', () => {
           this.isConnecting = false;
-          resolve(code);
+          resolve(this.roomCode!);
         });
 
         this.peer.on('connection', (connection) => {
           this.conn = connection;
-          this.setupConnectionHandlers(playerName, timeLimit);
+          this.activeTransport = 'webrtc';
+          this.setupWebRTCConnection(playerName, timeLimit);
         });
 
         this.peer.on('error', (err) => {
+          console.warn('PeerJS host notice:', err.type, err.message);
+          // If PeerJS server is blocked/offline, local channel still works
           this.isConnecting = false;
-          let message = 'Unable to create multiplayer room.';
-          if (err.type === 'unavailable-id') {
-            message = 'Room code is already active. Please generate a new code.';
-          }
-          this.callbacks.onError?.(message);
-          reject(new Error(message));
+          resolve(this.roomCode!);
         });
       } catch (err: any) {
+        console.warn('Peer init error:', err);
         this.isConnecting = false;
-        const msg = err?.message || 'Failed to initialize peer';
-        this.callbacks.onError?.(msg);
-        reject(err);
+        resolve(this.roomCode!);
       }
+
+      // Safety timeout: resolve within 2.5s regardless so UI is never blocked
+      setTimeout(() => {
+        this.isConnecting = false;
+        resolve(this.roomCode!);
+      }, 2500);
     });
   }
 
   /**
-   * Guest connects to an existing host room code
+   * Guest joins an existing room
+   * Attempts connection over both Local BroadcastChannel and WebRTC with strict timeout
    */
   public async joinRoom(
     code: string,
@@ -112,17 +147,77 @@ class MultiplayerEngine {
     this.leaveRoom();
     if (callbacks) this.callbacks = { ...this.callbacks, ...callbacks };
 
-    this.roomCode = code;
+    this.roomCode = code.trim().toUpperCase();
     this.isHost = false;
     this.isConnecting = true;
+    const clean = this.roomCode.toLowerCase().replace(/[^a-z0-9]/g, '');
 
     return new Promise((resolve, reject) => {
+      let resolved = false;
+
+      const finishSuccess = (transport: 'local' | 'webrtc', hostName: string) => {
+        if (resolved) return;
+        resolved = true;
+        this.isConnecting = false;
+        this.activeTransport = transport;
+        this.callbacks.onConnected?.(this.roomCode!, hostName || 'Host Grandmaster', 'guest');
+        resolve(true);
+      };
+
+      const finishError = (message: string) => {
+        if (resolved) return;
+        resolved = true;
+        this.isConnecting = false;
+        this.callbacks.onError?.(message);
+        reject(new Error(message));
+      };
+
+      // 1. Local BroadcastChannel Handshake
       try {
-        // Random guest peer ID
-        this.peer = new Peer({ debug: 1 });
+        if (typeof BroadcastChannel !== 'undefined') {
+          this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
+          this.localChannel.onmessage = (event) => {
+            const data = event.data as MultiplayerPayload;
+            if (data?.type === 'HANDSHAKE_ACK') {
+              finishSuccess('local', data.name);
+            } else {
+              this.dispatchPayload(data);
+            }
+          };
+
+          // Send handshake ping immediately and retry every 400ms for 3 attempts
+          const sendLocalPing = () => {
+            if (resolved) return;
+            try {
+              this.localChannel?.postMessage({
+                type: 'HANDSHAKE',
+                name: playerName,
+                color: 'b',
+                timeLimit: 600,
+              } as MultiplayerPayload);
+            } catch {}
+          };
+
+          sendLocalPing();
+          setTimeout(sendLocalPing, 400);
+          setTimeout(sendLocalPing, 800);
+        }
+      } catch (e) {
+        console.warn('BroadcastChannel error:', e);
+      }
+
+      // 2. WebRTC P2P Connection
+      try {
+        this.peer = new Peer({
+          debug: 1,
+          config: {
+            iceServers: GOOGLE_ICE_SERVERS,
+          },
+        });
 
         this.peer.on('open', () => {
-          const targetPeerId = this.formatPeerId(code);
+          if (resolved) return;
+          const targetPeerId = this.formatPeerId(this.roomCode!);
           const connection = this.peer!.connect(targetPeerId, {
             reliable: true,
           });
@@ -130,110 +225,150 @@ class MultiplayerEngine {
           this.conn = connection;
 
           connection.on('open', () => {
-            this.isConnecting = false;
-            // Send Handshake to Host
+            this.setupWebRTCConnection(playerName, 600);
+            // Send Handshake
             connection.send({
               type: 'HANDSHAKE',
               name: playerName,
               color: 'b',
               timeLimit: 600,
             } as MultiplayerPayload);
-
-            this.setupConnectionHandlers(playerName, 600);
-            this.callbacks.onConnected?.(targetPeerId, 'Host Player', 'guest');
-            resolve(true);
+            finishSuccess('webrtc', 'Host Grandmaster');
           });
 
           connection.on('error', (err) => {
-            this.isConnecting = false;
-            const msg = 'Failed to connect to host. Make sure room code is correct.';
-            this.callbacks.onError?.(msg);
-            reject(new Error(msg));
+            console.warn('WebRTC conn error:', err);
           });
         });
 
         this.peer.on('error', (err) => {
-          this.isConnecting = false;
-          let msg = 'Failed to join multiplayer room.';
+          console.warn('PeerJS guest error:', err.type, err.message);
           if (err.type === 'peer-unavailable') {
-            msg = `Room ${code} was not found or the host has disconnected.`;
+            // Target host peer not found on WebRTC broker
+            if (!resolved && this.activeTransport !== 'local') {
+              finishError(`Room "${code}" was not found. Verify the code and ensure host is waiting.`);
+            }
           }
-          this.callbacks.onError?.(msg);
-          reject(new Error(msg));
         });
       } catch (err: any) {
-        this.isConnecting = false;
-        const msg = err?.message || 'Connection error';
-        this.callbacks.onError?.(msg);
-        reject(err);
+        console.warn('Guest peer init error:', err);
       }
+
+      // 3. Strict 6-second timeout watchdog (prevents infinite loading spinner)
+      setTimeout(() => {
+        if (!resolved) {
+          if (this.activeTransport === 'local') {
+            finishSuccess('local', 'Host Grandmaster');
+          } else {
+            finishError(`Connection timed out for room "${code}". Ensure the host has created the room.`);
+          }
+        }
+      }, 6000);
     });
   }
 
-  private setupConnectionHandlers(playerName: string, timeLimit: number) {
+  private handleLocalMessage(msg: MultiplayerPayload, myName: string) {
+    if (!msg || !msg.type) return;
+
+    if (msg.type === 'HANDSHAKE') {
+      if (this.isHost) {
+        this.activeTransport = 'local';
+        this.localChannel?.postMessage({
+          type: 'HANDSHAKE_ACK',
+          name: myName,
+          color: 'w',
+        } as MultiplayerPayload);
+        this.callbacks.onConnected?.(this.roomCode!, msg.name, 'host');
+      }
+    } else if (msg.type === 'HANDSHAKE_ACK') {
+      this.activeTransport = 'local';
+      this.callbacks.onConnected?.(this.roomCode!, msg.name, 'guest');
+    } else {
+      this.dispatchPayload(msg);
+    }
+  }
+
+  private setupWebRTCConnection(playerName: string, timeLimit: number) {
     if (!this.conn) return;
 
     this.conn.on('data', (data: any) => {
       const msg = data as MultiplayerPayload;
       if (!msg || !msg.type) return;
 
-      switch (msg.type) {
-        case 'HANDSHAKE':
-          // Host receives handshake from guest -> respond with ACK
-          if (this.isHost && this.conn) {
-            this.conn.send({
-              type: 'HANDSHAKE_ACK',
-              name: playerName,
-              color: 'w',
-            } as MultiplayerPayload);
-            this.callbacks.onConnected?.(this.conn.peer, msg.name, 'host');
-          }
-          break;
-
-        case 'HANDSHAKE_ACK':
-          // Guest receives handshake acknowledgment from host
-          if (this.conn) {
-            this.callbacks.onConnected?.(this.conn.peer, msg.name, 'guest');
-          }
-          break;
-
-        case 'MOVE':
-          this.callbacks.onMoveReceived?.(
-            msg.from,
-            msg.to,
-            msg.promotion,
-            msg.whiteTime,
-            msg.blackTime
-          );
-          break;
-
-        case 'SYNC_CLOCK':
-          this.callbacks.onClockSync?.(msg.whiteTime, msg.blackTime);
-          break;
-
-        case 'RESIGN':
-          this.callbacks.onOpponentResigned?.(msg.color);
-          break;
-
-        case 'RESTART':
-          this.callbacks.onRestartRequested?.();
-          break;
+      if (msg.type === 'HANDSHAKE') {
+        if (this.isHost && this.conn && this.conn.open) {
+          this.conn.send({
+            type: 'HANDSHAKE_ACK',
+            name: playerName,
+            color: 'w',
+          } as MultiplayerPayload);
+          this.callbacks.onConnected?.(this.conn.peer, msg.name, 'host');
+        }
+      } else if (msg.type === 'HANDSHAKE_ACK') {
+        if (this.conn) {
+          this.callbacks.onConnected?.(this.conn.peer, msg.name, 'guest');
+        }
+      } else {
+        this.dispatchPayload(msg);
       }
     });
 
     this.conn.on('close', () => {
-      this.callbacks.onDisconnected?.('Opponent disconnected from the match.');
-      this.conn = null;
+      if (this.activeTransport === 'webrtc') {
+        this.callbacks.onDisconnected?.('Opponent disconnected from the match.');
+        this.conn = null;
+        this.activeTransport = null;
+      }
     });
 
     this.conn.on('error', (err) => {
-      this.callbacks.onError?.(err?.message || 'Data connection error');
+      console.warn('WebRTC data channel notice:', err?.message);
     });
   }
 
+  private dispatchPayload(msg: MultiplayerPayload) {
+    switch (msg.type) {
+      case 'MOVE':
+        this.callbacks.onMoveReceived?.(
+          msg.from,
+          msg.to,
+          msg.promotion,
+          msg.whiteTime,
+          msg.blackTime
+        );
+        break;
+
+      case 'SYNC_CLOCK':
+        this.callbacks.onClockSync?.(msg.whiteTime, msg.blackTime);
+        break;
+
+      case 'RESIGN':
+        this.callbacks.onOpponentResigned?.(msg.color);
+        break;
+
+      case 'RESTART':
+        this.callbacks.onRestartRequested?.();
+        break;
+    }
+  }
+
   /**
-   * Broadcast a move across the WebRTC connection
+   * Broadcast payload over active transport (Local or WebRTC)
    */
+  private sendPayload(payload: MultiplayerPayload) {
+    // 1. Send via Local BroadcastChannel
+    try {
+      this.localChannel?.postMessage(payload);
+    } catch {}
+
+    // 2. Send via WebRTC DataConnection
+    try {
+      if (this.conn && this.conn.open) {
+        this.conn.send(payload);
+      }
+    } catch {}
+  }
+
   public sendMove(
     from: Square,
     to: Square,
@@ -241,58 +376,44 @@ class MultiplayerEngine {
     whiteTime?: number,
     blackTime?: number
   ) {
-    if (this.conn && this.conn.open) {
-      this.conn.send({
-        type: 'MOVE',
-        from,
-        to,
-        promotion,
-        whiteTime,
-        blackTime,
-      } as MultiplayerPayload);
-    }
+    this.sendPayload({
+      type: 'MOVE',
+      from,
+      to,
+      promotion,
+      whiteTime,
+      blackTime,
+    });
   }
 
-  /**
-   * Sync clock times
-   */
   public sendClockSync(whiteTime: number, blackTime: number) {
-    if (this.conn && this.conn.open) {
-      this.conn.send({
-        type: 'SYNC_CLOCK',
-        whiteTime,
-        blackTime,
-      } as MultiplayerPayload);
-    }
+    this.sendPayload({
+      type: 'SYNC_CLOCK',
+      whiteTime,
+      blackTime,
+    });
   }
 
-  /**
-   * Broadcast resignation
-   */
   public sendResign(color: Color) {
-    if (this.conn && this.conn.open) {
-      this.conn.send({
-        type: 'RESIGN',
-        color,
-      } as MultiplayerPayload);
-    }
+    this.sendPayload({
+      type: 'RESIGN',
+      color,
+    });
   }
 
-  /**
-   * Broadcast restart/rematch request
-   */
   public sendRestart() {
-    if (this.conn && this.conn.open) {
-      this.conn.send({
-        type: 'RESTART',
-      } as MultiplayerPayload);
-    }
+    this.sendPayload({
+      type: 'RESTART',
+    });
   }
 
-  /**
-   * Cleanly disconnect and destroy peer
-   */
   public leaveRoom() {
+    if (this.localChannel) {
+      try {
+        this.localChannel.close();
+      } catch {}
+      this.localChannel = null;
+    }
     if (this.conn) {
       try {
         this.conn.close();
@@ -305,13 +426,21 @@ class MultiplayerEngine {
       } catch {}
       this.peer = null;
     }
+    if (this.pingInterval) {
+      clearInterval(this.pingInterval);
+      this.pingInterval = null;
+    }
     this.roomCode = null;
     this.isHost = false;
     this.isConnecting = false;
+    this.activeTransport = null;
   }
 
   public isConnected(): boolean {
-    return Boolean(this.conn && this.conn.open);
+    return Boolean(
+      (this.localChannel && this.activeTransport === 'local') ||
+      (this.conn && this.conn.open)
+    );
   }
 
   public getRoomCode(): string | null {
@@ -320,6 +449,10 @@ class MultiplayerEngine {
 
   public getIsHost(): boolean {
     return this.isHost;
+  }
+
+  public getTransportType(): 'local' | 'webrtc' | null {
+    return this.activeTransport;
   }
 }
 

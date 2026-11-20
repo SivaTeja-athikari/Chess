@@ -12,7 +12,8 @@ import {
   Loader2, 
   Smartphone, 
   Sparkles,
-  ShieldCheck
+  ShieldCheck,
+  ExternalLink
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -48,34 +49,33 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
     if (roomParam) {
       setActiveTab('join');
       setJoinCodeInput(roomParam.trim().toUpperCase());
-      setStatusMessage(`Detected invite code "${roomParam}". Click "Connect & Enter Game" to join.`);
+      setStatusMessage(`Detected invite room "${roomParam}". Click "Connect & Enter Game" to join.`);
     } else if (!multiplayerRoom && activeTab === 'create') {
-      // Auto-create private room if not already created
       createMultiplayerRoom();
     }
   }, [isOpen]);
 
-  // When room becomes active/playing, auto-close or celebrate
+  // When room becomes active/playing, auto-close to start the battle
   useEffect(() => {
     if (multiplayerRoom?.status === 'playing' && isOpen) {
       setStatusMessage('Opponent connected! Entering live battle...');
       const timer = setTimeout(() => {
         onClose();
-      }, 1400);
+      }, 1000);
       return () => clearTimeout(timer);
     }
   }, [multiplayerRoom?.status, isOpen]);
 
   if (!isOpen) return null;
 
-  const currentCode = multiplayerRoom?.code || 'GM-2048';
+  const currentCode = multiplayerRoom?.code || 'GM-4821';
   const inviteLink = typeof window !== 'undefined' 
     ? `${window.location.origin}${window.location.pathname}?room=${currentCode}`
     : `https://chess.ownone.app/?room=${currentCode}`;
 
   const handleCreateNewRoom = () => {
     const code = createMultiplayerRoom();
-    setStatusMessage(`New room ${code} initialized. Share the link or code with your friend.`);
+    setStatusMessage(`New room ${code} ready. Share the link or code with your friend.`);
   };
 
   const handleCopyCode = () => {
@@ -90,12 +90,16 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
     setTimeout(() => setCopiedLink(false), 2500);
   };
 
+  const handleOpenLocalTestWindow = () => {
+    window.open(inviteLink, '_blank');
+  };
+
   const handleJoinRoom = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!joinCodeInput.trim() || isJoining) return;
 
     setIsJoining(true);
-    setStatusMessage('Connecting via WebRTC peer data channel...');
+    setStatusMessage('Connecting to host room...');
 
     try {
       const code = joinCodeInput.trim().toUpperCase();
@@ -106,14 +110,14 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
         setTimeout(() => {
           setIsJoining(false);
           onClose();
-        }, 1000);
+        }, 900);
       } else {
         setIsJoining(false);
-        setStatusMessage('Room not found or host has disconnected. Verify the code and try again.');
+        setStatusMessage(`Could not find room "${code}". Ensure the host has created the room.`);
       }
-    } catch {
+    } catch (err: any) {
       setIsJoining(false);
-      setStatusMessage('Unable to establish connection to room. Please check the code.');
+      setStatusMessage(err?.message || 'Connection timed out. Check code and try again.');
     }
   };
 
@@ -131,7 +135,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
       restartGame(false);
       confetti({ particleCount: 90, spread: 70 });
       onClose();
-    }, 1400);
+    }, 1200);
   };
 
   const isRoomPlaying = multiplayerRoom?.status === 'playing';
@@ -160,10 +164,10 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
           </div>
 
           <h2 className="font-display text-2xl font-bold text-stone-100 tracking-wide mb-1">
-            Cross-Device Multiplayer
+            Real-Time Multiplayer
           </h2>
           <p className="text-xs text-stone-400 mb-6 font-light">
-            Real-time peer-to-peer WebRTC synchronization across phones, tablets, & PCs
+            Fast real-time peer communication across phones, tablets, & computer windows
           </p>
 
           {/* Tabs */}
@@ -221,10 +225,19 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
                 {/* Direct Link Action */}
                 <button
                   onClick={handleCopyInviteLink}
-                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 text-sky-300 text-xs font-medium transition-colors"
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-sky-950/60 hover:bg-sky-900/80 border border-sky-500/40 text-sky-300 text-xs font-medium transition-colors mb-2"
                 >
                   {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <LinkIcon className="w-3.5 h-3.5 text-sky-400" />}
                   <span>{copiedLink ? 'Invite Link Copied!' : 'Copy Direct Device Invite Link'}</span>
+                </button>
+
+                {/* Quick 1-Click Multi-Window Test */}
+                <button
+                  onClick={handleOpenLocalTestWindow}
+                  className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/80 border border-emerald-500/40 text-emerald-300 text-xs font-semibold transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Open 2nd Window (Instant 2-Player Test)</span>
                 </button>
 
                 {/* Real-time Status Badge */}
@@ -237,7 +250,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
                   ) : (
                     <div className="flex items-center gap-1.5 text-xs text-amber-300 animate-pulse font-medium">
                       <Radio className="w-3.5 h-3.5 text-amber-400 animate-spin" />
-                      <span>Waiting for opponent on other device...</span>
+                      <span>Waiting for opponent to connect...</span>
                     </div>
                   )}
                 </div>
@@ -247,7 +260,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
               <div className="flex items-start gap-2.5 p-2.5 rounded-lg bg-stone-900/50 border border-stone-800 text-left text-[11px] text-stone-400">
                 <Smartphone className="w-4 h-4 text-sky-400 shrink-0 mt-0.5" />
                 <span>
-                  Send this link to a phone, tablet, or another browser window. WebRTC connects directly without account signups!
+                  Send this link to a phone, tablet, or another browser window. Connects directly with zero logins!
                 </span>
               </div>
 
