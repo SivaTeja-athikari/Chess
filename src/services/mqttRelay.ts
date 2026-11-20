@@ -108,8 +108,9 @@ function parsePublishPacket(view: Uint8Array): { topic: string; payload: string 
 }
 
 const PUBLIC_BROKERS = [
-  'wss://broker.hivemq.com:8884/mqtt',
   'wss://broker.emqx.io:8084/mqtt',
+  'wss://broker.hivemq.com:8884/mqtt',
+  'wss://test.mosquitto.org:8081/mqtt',
 ];
 
 export class MqttRelay {
@@ -129,21 +130,42 @@ export class MqttRelay {
     return this.clientId;
   }
 
-  public connect(topic: string, onMessage: MessageCallback): Promise<boolean> {
+  public async connect(topic: string, onMessage: MessageCallback): Promise<boolean> {
     this.disconnect();
     this.currentTopic = topic;
     this.onMessageCallback = onMessage;
 
+    // Attempt brokers in order
+    for (let attempt = 0; attempt < PUBLIC_BROKERS.length; attempt++) {
+      const idx = (this.brokerIndex + attempt) % PUBLIC_BROKERS.length;
+      const brokerUrl = PUBLIC_BROKERS[idx];
+
+      const success = await this.tryConnectSingle(brokerUrl);
+      if (success) {
+        this.brokerIndex = idx;
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private tryConnectSingle(brokerUrl: string): Promise<boolean> {
     return new Promise((resolve) => {
-      let resolved = false;
-      const brokerUrl = PUBLIC_BROKERS[this.brokerIndex % PUBLIC_BROKERS.length];
+      let settled = false;
+
+      const finish = (result: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
 
       try {
-        this.ws = new WebSocket(brokerUrl, ['mqttv3.1', 'mqtt']);
+        const socket = new WebSocket(brokerUrl, ['mqttv3.1', 'mqtt']);
+        this.ws = socket;
         this.ws.binaryType = 'arraybuffer';
 
         this.ws.onopen = () => {
-          // Send MQTT CONNECT packet
           const connectPacket = createConnectPacket(this.clientId);
           this.sendRaw(connectPacket);
         };
@@ -154,31 +176,23 @@ export class MqttRelay {
 
           const packetType = data[0] >> 4;
 
-          // CONNACK packet (Type 2)
+          // CONNACK (Type 2)
           if (packetType === 2) {
             this.isConnected = true;
-            // Send SUBSCRIBE packet to the room topic
             if (this.currentTopic) {
               const subPacket = createSubscribePacket(this.currentTopic, 1);
               this.sendRaw(subPacket);
             }
-
-            // Start heartbeat ping every 25 seconds
             this.startPing();
-
-            if (!resolved) {
-              resolved = true;
-              resolve(true);
-            }
+            finish(true);
           }
 
-          // PUBLISH packet (Type 3)
+          // PUBLISH (Type 3)
           if (packetType === 3) {
             const parsed = parsePublishPacket(data);
             if (parsed && parsed.payload) {
               try {
                 const json = JSON.parse(parsed.payload) as MqttMessage;
-                // Ignore messages sent by self
                 if (json.senderId !== this.clientId) {
                   this.onMessageCallback?.(json);
                 }
@@ -188,30 +202,26 @@ export class MqttRelay {
         };
 
         this.ws.onerror = () => {
-          if (!resolved) {
-            resolved = true;
-            this.brokerIndex++;
-            resolve(false);
-          }
+          finish(false);
         };
 
         this.ws.onclose = () => {
           this.isConnected = false;
           this.stopPing();
+          finish(false);
         };
 
-        // 4-second timeout to fall back to secondary broker
+        // 3.5-second timeout for broker connection
         setTimeout(() => {
-          if (!resolved) {
-            resolved = true;
-            resolve(this.isConnected);
+          if (!this.isConnected) {
+            try {
+              socket.close();
+            } catch {}
+            finish(false);
           }
-        }, 4000);
+        }, 3500);
       } catch (err) {
-        if (!resolved) {
-          resolved = true;
-          resolve(false);
-        }
+        finish(false);
       }
     });
   }
@@ -260,7 +270,6 @@ export class MqttRelay {
     this.stopPing();
     if (this.ws) {
       try {
-        // Send DISCONNECT packet (0xe0, 0x00)
         this.sendRaw(new Uint8Array([0xe0, 0x00]));
         this.ws.close();
       } catch {}

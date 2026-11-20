@@ -18,6 +18,7 @@ import { aiEngine } from '../engine/stockfish/aiEngine';
 import { PUZZLES_DATABASE } from '../services/puzzleBook';
 import { OPENINGS_DATABASE } from '../services/openingBook';
 import { multiplayer } from '../services/multiplayerEngine';
+import { multiplayerSession } from '../services/multiplayerSession';
 import confetti from 'canvas-confetti';
 
 interface PendingPromotion {
@@ -174,23 +175,205 @@ function calculateCapturedPieces(game: Chess): CapturedPiecesState {
 }
 
 export const useChessStore = create<ChessState>((set, get) => {
-  const initialGame = new Chess();
+  // Hydrate saved multiplayer session if user refreshed or navigated back
+  const savedSession = multiplayerSession.load();
+  let initialGame = new Chess();
+  let initialHistory: MoveRecord[] = [];
+  let initialStatus: GameStatus = 'idle';
+  let initialWinner: Color | 'draw' | null = null;
+  let initialWhiteTime = 600;
+  let initialBlackTime = 600;
+  let initialGameMode: GameMode = 'pve';
+  let initialOrientation: Color = 'w';
+  let initialMultiplayerRoom: MultiplayerRoom | null = null;
+
+  if (savedSession) {
+    try {
+      initialGame = new Chess(savedSession.fen);
+      initialHistory = savedSession.history || [];
+      initialStatus = savedSession.status || 'idle';
+      initialWinner = savedSession.winner || null;
+      initialWhiteTime = savedSession.whiteTime ?? 600;
+      initialBlackTime = savedSession.blackTime ?? 600;
+      initialGameMode = 'pvp-online';
+      initialOrientation = savedSession.playerColor;
+      initialMultiplayerRoom = {
+        code: savedSession.roomCode,
+        hostName: savedSession.role === 'host' ? 'You (White)' : (savedSession.opponentName || 'Host'),
+        opponentName: savedSession.role === 'host' ? (savedSession.opponentName || 'Challenger') : 'You (Black)',
+        status: savedSession.status === 'idle' ? 'waiting' : 'playing',
+        playerColor: savedSession.playerColor,
+        timeLimit: savedSession.timeLimit || 600,
+      };
+    } catch (e) {
+      console.warn('Error hydrating saved session:', e);
+      multiplayerSession.clear();
+    }
+  }
+
+  const createMultiplayerHandlers = (
+    roomCode: string,
+    myRole: 'host' | 'guest',
+    myColor: Color
+  ) => ({
+    onConnected: (_id: string, opponentName: string) => {
+      set((s) => ({
+        multiplayerRoom: s.multiplayerRoom
+          ? { ...s.multiplayerRoom, status: 'playing', opponentName }
+          : null,
+        playerWhite: myColor === 'w' ? s.playerWhite : {
+          id: 'host',
+          name: opponentName || 'Host Grandmaster',
+          avatar: '♔',
+          rating: 1920,
+          country: 'Online',
+        },
+        playerBlack: myColor === 'b' ? s.playerBlack : {
+          id: 'guest',
+          name: opponentName || 'Challenger',
+          avatar: '⚔️',
+          rating: 1850,
+          country: 'Guest',
+        },
+      }));
+      const current = get();
+      multiplayerSession.save({
+        roomCode,
+        playerColor: myColor,
+        role: myRole,
+        opponentName: opponentName || 'Opponent',
+        fen: current.game.fen(),
+        history: current.history,
+        whiteTime: current.whiteTime,
+        blackTime: current.blackTime,
+        timeLimit: current.timeLimit,
+        status: current.status,
+        winner: current.winner,
+      });
+      confetti({ particleCount: 75, spread: 65 });
+    },
+    onMoveReceived: (
+      from: Square,
+      to: Square,
+      promotion?: PieceType,
+      wt?: number,
+      bt?: number
+    ) => {
+      const success = get().makeMove(from, to, promotion, false);
+      if (!success) {
+        multiplayer.sendSyncRequest(myRole);
+        return;
+      }
+      if (wt !== undefined && bt !== undefined) {
+        set({ whiteTime: wt, blackTime: bt });
+      }
+    },
+    onSyncRequested: () => {
+      const s = get();
+      multiplayer.sendSyncState(
+        s.game.fen(),
+        s.history,
+        s.whiteTime,
+        s.blackTime,
+        s.status,
+        s.winner
+      );
+    },
+    onSyncStateReceived: (
+      fen: string,
+      history: MoveRecord[],
+      wt: number,
+      bt: number,
+      status: GameStatus,
+      winner: Color | 'draw' | null
+    ) => {
+      try {
+        const restoredGame = new Chess(fen);
+        const last = history[history.length - 1];
+        set({
+          game: restoredGame,
+          fen,
+          turn: restoredGame.turn(),
+          history,
+          lastMove: last ? { from: last.from, to: last.to } : null,
+          whiteTime: wt,
+          blackTime: bt,
+          status,
+          winner,
+          capturedPieces: calculateCapturedPieces(restoredGame),
+          isTimerActive: !restoredGame.isGameOver() && status !== 'idle',
+        });
+        const room = get().multiplayerRoom;
+        if (room) {
+          multiplayerSession.save({
+            roomCode: room.code,
+            playerColor: room.playerColor,
+            role: myRole,
+            opponentName: room.opponentName || 'Opponent',
+            fen,
+            history,
+            whiteTime: wt,
+            blackTime: bt,
+            timeLimit: get().timeLimit,
+            status,
+            winner,
+          });
+        }
+      } catch (e) {
+        console.warn('Sync parse error:', e);
+      }
+    },
+    onOpponentResigned: (color: Color) => {
+      get().resign(color, false);
+    },
+    onRestartRequested: () => {
+      get().restartGame(false);
+    },
+    onOpponentLeft: () => {
+      set((s) => ({
+        multiplayerRoom: s.multiplayerRoom
+          ? { ...s.multiplayerRoom, status: 'waiting' }
+          : null,
+      }));
+    },
+    onDisconnected: () => {
+      // Retain match state on disconnect
+    },
+  });
+
+  // Re-attach WebSocket connection in background if session was restored from reload
+  if (savedSession && initialMultiplayerRoom) {
+    setTimeout(() => {
+      const role = savedSession.role;
+      const color = savedSession.playerColor;
+      multiplayer.reconnect(
+        savedSession.roomCode,
+        role === 'host' ? 'Host Grandmaster' : 'Challenger',
+        role,
+        createMultiplayerHandlers(savedSession.roomCode, role, color)
+      ).then(() => {
+        multiplayer.sendSyncRequest(role);
+      });
+    }, 150);
+  }
 
   return {
     game: initialGame,
     fen: initialGame.fen(),
-    turn: 'w',
-    status: 'idle',
-    winner: null,
-    history: [],
+    turn: initialGame.turn(),
+    status: initialStatus,
+    winner: initialWinner,
+    history: initialHistory,
     viewingMoveIndex: null,
 
     selectedSquare: null,
     legalMoves: [],
-    lastMove: null,
+    lastMove: initialHistory[initialHistory.length - 1]
+      ? { from: initialHistory[initialHistory.length - 1].from, to: initialHistory[initialHistory.length - 1].to }
+      : null,
     pendingPromotion: null,
 
-    gameMode: 'pve',
+    gameMode: initialGameMode,
     aiDifficulty: 'intermediate',
     aiColor: 'b',
     isAiThinking: false,
@@ -202,7 +385,7 @@ export const useChessStore = create<ChessState>((set, get) => {
       set((state) => ({ autoFlipLocal: !state.autoFlipLocal }));
     },
 
-    multiplayerRoom: null,
+    multiplayerRoom: initialMultiplayerRoom,
     createMultiplayerRoom: (timeLimit = 600) => {
       const code = `GM-${Math.floor(1000 + Math.random() * 9000)}`;
       const room: MultiplayerRoom = {
@@ -216,54 +399,34 @@ export const useChessStore = create<ChessState>((set, get) => {
         multiplayerRoom: room,
         gameMode: 'pvp-online',
         orientation: 'w',
+        timeLimit,
+        whiteTime: timeLimit,
+        blackTime: timeLimit,
         playerWhite: { id: 'host', name: 'You (White)', avatar: '♔', rating: 1850, country: 'Host' },
         playerBlack: { id: 'guest', name: 'Awaiting Player...', avatar: '⏳', rating: 1800, country: 'Online' },
       });
-      get().restartGame();
+      get().restartGame(true);
 
-      multiplayer.createRoom(code, 'Host Player', timeLimit, {
-        onConnected: (_id, opponentName) => {
-          set((s) => ({
-            multiplayerRoom: s.multiplayerRoom
-              ? { ...s.multiplayerRoom, status: 'playing', opponentName }
-              : null,
-            playerBlack: {
-              id: 'guest',
-              name: opponentName || 'Challenger',
-              avatar: '⚔️',
-              rating: 1850,
-              country: 'Guest',
-            },
-          }));
-          confetti({ particleCount: 70, spread: 60 });
-        },
-        onMoveReceived: (from, to, promotion, wt, bt) => {
-          get().makeMove(from, to, promotion, false);
-          if (wt !== undefined && bt !== undefined) {
-            set({ whiteTime: wt, blackTime: bt });
-          }
-        },
-        onOpponentResigned: (color) => {
-          get().resign(color);
-        },
-        onRestartRequested: () => {
-          get().restartGame();
-        },
-        onDisconnected: () => {
-          set((s) => ({
-            multiplayerRoom: s.multiplayerRoom
-              ? { ...s.multiplayerRoom, status: 'waiting' }
-              : null,
-            playerBlack: {
-              id: 'guest',
-              name: 'Player Disconnected',
-              avatar: '⏳',
-              rating: 1800,
-              country: 'Offline',
-            },
-          }));
-        },
-      }).catch(() => {});
+      multiplayer.createRoom(
+        code,
+        'Host Grandmaster',
+        timeLimit,
+        createMultiplayerHandlers(code, 'host', 'w')
+      ).catch(() => {});
+
+      multiplayerSession.save({
+        roomCode: code,
+        playerColor: 'w',
+        role: 'host',
+        opponentName: 'Awaiting Player...',
+        fen: new Chess().fen(),
+        history: [],
+        whiteTime: timeLimit,
+        blackTime: timeLimit,
+        timeLimit,
+        status: 'idle',
+        winner: null,
+      });
 
       return code;
     },
@@ -285,65 +448,51 @@ export const useChessStore = create<ChessState>((set, get) => {
         playerWhite: { id: 'host', name: 'Host Player', avatar: '♔', rating: 1920, country: 'Online' },
         playerBlack: { id: 'guest', name: 'You (Black)', avatar: '⚔️', rating: 1850, country: 'Challenger' },
       });
-      get().restartGame();
+      get().restartGame(true);
 
       try {
-        await multiplayer.joinRoom(code, 'Guest Player', {
-          onConnected: (_id, hostName) => {
-            set((s) => ({
-              multiplayerRoom: s.multiplayerRoom
-                ? { ...s.multiplayerRoom, status: 'playing', hostName }
-                : null,
-              playerWhite: {
-                id: 'host',
-                name: hostName || 'Host Challenger',
-                avatar: '♔',
-                rating: 1920,
-                country: 'Host',
-              },
-            }));
-            confetti({ particleCount: 80, spread: 60 });
-          },
-          onMoveReceived: (from, to, promotion, wt, bt) => {
-            get().makeMove(from, to, promotion, false);
-            if (wt !== undefined && bt !== undefined) {
-              set({ whiteTime: wt, blackTime: bt });
-            }
-          },
-          onOpponentResigned: (color) => {
-            get().resign(color);
-          },
-          onRestartRequested: () => {
-            get().restartGame();
-          },
-          onDisconnected: () => {
-            set((s) => ({
-              multiplayerRoom: s.multiplayerRoom
-                ? { ...s.multiplayerRoom, status: 'waiting' }
-                : null,
-            }));
-          },
-        });
-        return true;
+        const success = await multiplayer.joinRoom(
+          code,
+          'Guest Challenger',
+          createMultiplayerHandlers(code, 'guest', 'b')
+        );
+        if (success) {
+          multiplayerSession.save({
+            roomCode: code,
+            playerColor: 'b',
+            role: 'guest',
+            opponentName: 'Host Player',
+            fen: new Chess().fen(),
+            history: [],
+            whiteTime: 600,
+            blackTime: 600,
+            timeLimit: 600,
+            status: 'idle',
+            winner: null,
+          });
+        }
+        return success;
       } catch {
         return false;
       }
     },
 
     leaveMultiplayerRoom: () => {
+      multiplayer.sendLeave();
       multiplayer.leaveRoom();
+      multiplayerSession.clear();
       set({ multiplayerRoom: null });
       get().setGameMode('pve');
     },
 
-    timeLimit: 600,
-    whiteTime: 600,
-    blackTime: 600,
-    isTimerActive: false,
+    timeLimit: initialWhiteTime,
+    whiteTime: initialWhiteTime,
+    blackTime: initialBlackTime,
+    isTimerActive: initialStatus === 'in_progress' || initialStatus === 'check',
 
     boardTheme: 'royal-wood',
     viewMode: '2d',
-    orientation: 'w',
+    orientation: initialOrientation,
     isMuted: false,
     soundVolume: 0.7,
 
@@ -352,7 +501,7 @@ export const useChessStore = create<ChessState>((set, get) => {
     toggleCinematicBattleMode: () => set((s) => ({ cinematicBattleMode: !s.cinematicBattleMode })),
     clearActiveCombat: () => set({ activeCombat: null }),
 
-    capturedPieces: { w: [], b: [], scoreDiff: 0 },
+    capturedPieces: calculateCapturedPieces(initialGame),
 
     currentPuzzleId: null,
     puzzleState: 'solving',
@@ -437,8 +586,10 @@ export const useChessStore = create<ChessState>((set, get) => {
         multiplayerRoom 
       } = get();
 
-      if (gameMode === 'pvp-online' && isLocal && multiplayerRoom && game.turn() !== multiplayerRoom.playerColor) {
-        return false;
+      if (gameMode === 'pvp-online' && isLocal && multiplayerRoom) {
+        if (game.turn() !== multiplayerRoom.playerColor) return false;
+        const piece = game.get(from);
+        if (piece && piece.color !== multiplayerRoom.playerColor) return false;
       }
 
       try {
@@ -538,9 +689,34 @@ export const useChessStore = create<ChessState>((set, get) => {
           orientation: newOrientation,
         });
 
-        // Broadcast over WebRTC if online multiplayer move made locally
-        if (gameMode === 'pvp-online' && isLocal) {
-          multiplayer.sendMove(from, to, promotion, get().whiteTime, get().blackTime);
+        // Broadcast over WebSocket relay if online multiplayer move made locally
+        if (gameMode === 'pvp-online') {
+          if (isLocal) {
+            multiplayer.sendMove(
+              from,
+              to,
+              promotion,
+              get().whiteTime,
+              get().blackTime,
+              updatedHistory.length,
+              game.fen()
+            );
+          }
+          if (multiplayerRoom) {
+            multiplayerSession.save({
+              roomCode: multiplayerRoom.code,
+              playerColor: multiplayerRoom.playerColor,
+              role: multiplayerRoom.playerColor === 'w' ? 'host' : 'guest',
+              opponentName: multiplayerRoom.opponentName || 'Opponent',
+              fen: game.fen(),
+              history: updatedHistory,
+              whiteTime: get().whiteTime,
+              blackTime: get().blackTime,
+              timeLimit: get().timeLimit,
+              status: newStatus,
+              winner,
+            });
+          }
         }
 
         // Handle puzzle mode progression
@@ -647,8 +823,23 @@ export const useChessStore = create<ChessState>((set, get) => {
     },
 
     restartGame: (isLocal: boolean = true) => {
+      const { timeLimit, gameMode, status, multiplayerRoom } = get();
+      const isGameOver = [
+        'checkmate',
+        'stalemate',
+        'draw_repetition',
+        'draw_fifty_moves',
+        'draw_insufficient_material',
+        'resigned',
+        'timeout',
+      ].includes(status);
+
+      // In online multiplayer, block unilateral mid-game resets! Only allow restart when game is finished
+      if (gameMode === 'pvp-online' && !isGameOver && status !== 'idle') {
+        return;
+      }
+
       const newGame = new Chess();
-      const { timeLimit, gameMode } = get();
       set({
         game: newGame,
         fen: newGame.fen(),
@@ -670,8 +861,25 @@ export const useChessStore = create<ChessState>((set, get) => {
         puzzleMoveStep: 0,
       });
       sound.playClick();
-      if (gameMode === 'pvp-online' && isLocal) {
-        multiplayer.sendRestart();
+      if (gameMode === 'pvp-online') {
+        if (isLocal) {
+          multiplayer.sendRestart();
+        }
+        if (multiplayerRoom) {
+          multiplayerSession.save({
+            roomCode: multiplayerRoom.code,
+            playerColor: multiplayerRoom.playerColor,
+            role: multiplayerRoom.playerColor === 'w' ? 'host' : 'guest',
+            opponentName: multiplayerRoom.opponentName || 'Opponent',
+            fen: newGame.fen(),
+            history: [],
+            whiteTime: timeLimit || 600,
+            blackTime: timeLimit || 600,
+            timeLimit: timeLimit || 600,
+            status: 'idle',
+            winner: null,
+          });
+        }
       }
     },
 
@@ -683,17 +891,43 @@ export const useChessStore = create<ChessState>((set, get) => {
         isTimerActive: false,
       });
       sound.playCheckmate();
-      if (get().gameMode === 'pvp-online' && isLocal) {
-        multiplayer.sendResign(color);
+      if (get().gameMode === 'pvp-online') {
+        if (isLocal) {
+          multiplayer.sendResign(color);
+        }
+        const room = get().multiplayerRoom;
+        if (room) {
+          multiplayerSession.save({
+            roomCode: room.code,
+            playerColor: room.playerColor,
+            role: room.playerColor === 'w' ? 'host' : 'guest',
+            opponentName: room.opponentName || 'Opponent',
+            fen: get().game.fen(),
+            history: get().history,
+            whiteTime: get().whiteTime,
+            blackTime: get().blackTime,
+            timeLimit: get().timeLimit,
+            status: 'resigned',
+            winner,
+          });
+        }
       }
     },
 
     flipBoard: () => {
+      // In online multiplayer, board orientation is strictly pinned to your assigned color
+      if (get().gameMode === 'pvp-online') return;
       set((state) => ({ orientation: state.orientation === 'w' ? 'b' : 'w' }));
       sound.playClick();
     },
 
     setGameMode: (mode: GameMode) => {
+      if (get().gameMode === 'pvp-online' && mode !== 'pvp-online') {
+        multiplayer.sendLeave();
+        multiplayer.leaveRoom();
+        multiplayerSession.clear();
+        set({ multiplayerRoom: null });
+      }
       if (mode === 'pvp-local') {
         set({
           playerWhite: { id: 'p1', name: 'Player 1 (White)', avatar: '♔', title: 'P1', rating: 1500, country: 'Local' },

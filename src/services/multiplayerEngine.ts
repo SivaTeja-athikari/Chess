@@ -1,4 +1,4 @@
-import { Square, PieceType, Color } from '../types/chess';
+import { Square, PieceType, Color, MoveRecord, GameStatus } from '../types/chess';
 import { MqttRelay, MqttMessage } from './mqttRelay';
 
 export type MultiplayerPayload =
@@ -11,12 +11,25 @@ export type MultiplayerPayload =
       promotion?: PieceType;
       whiteTime?: number;
       blackTime?: number;
+      moveNumber: number;
+      fen?: string;
+    }
+  | { type: 'SYNC_REQUEST'; fromRole: 'host' | 'guest' }
+  | {
+      type: 'SYNC_STATE';
+      fen: string;
+      history: MoveRecord[];
+      whiteTime: number;
+      blackTime: number;
+      status: GameStatus;
+      winner: Color | 'draw' | null;
+      moveNumber: number;
     }
   | { type: 'SYNC_CLOCK'; whiteTime: number; blackTime: number }
   | { type: 'RESIGN'; color: Color }
   | { type: 'RESTART' }
-  | { type: 'PING' }
-  | { type: 'PONG' };
+  | { type: 'LEAVE' }
+  | { type: 'PING' };
 
 interface MultiplayerCallbacks {
   onConnected?: (peerId: string, opponentName: string, role: 'host' | 'guest') => void;
@@ -25,11 +38,23 @@ interface MultiplayerCallbacks {
     to: Square,
     promotion?: PieceType,
     whiteTime?: number,
-    blackTime?: number
+    blackTime?: number,
+    moveNumber?: number,
+    fen?: string
+  ) => void;
+  onSyncRequested?: (fromRole: 'host' | 'guest') => void;
+  onSyncStateReceived?: (
+    fen: string,
+    history: MoveRecord[],
+    whiteTime: number,
+    blackTime: number,
+    status: GameStatus,
+    winner: Color | 'draw' | null
   ) => void;
   onClockSync?: (whiteTime: number, blackTime: number) => void;
   onOpponentResigned?: (color: Color) => void;
   onRestartRequested?: () => void;
+  onOpponentLeft?: () => void;
   onDisconnected?: (reason?: string) => void;
   onError?: (error: string) => void;
 }
@@ -43,6 +68,7 @@ class MultiplayerEngine {
   private isConnected: boolean = false;
   private isConnecting: boolean = false;
   private handshakeTimer: any = null;
+  private lastProcessedMoveNumber: number = -1;
 
   public setCallbacks(callbacks: MultiplayerCallbacks) {
     this.callbacks = { ...this.callbacks, ...callbacks };
@@ -52,10 +78,6 @@ class MultiplayerEngine {
     return code.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
 
-  /**
-   * Host initializes a room and waits for guest connection
-   * Connects to both global zero-account WebSocket relay and local BroadcastChannel
-   */
   public async createRoom(
     code: string,
     playerName: string = 'Grandmaster (Host)',
@@ -68,10 +90,11 @@ class MultiplayerEngine {
     this.roomCode = code.trim().toUpperCase();
     this.isHost = true;
     this.isConnecting = true;
+    this.lastProcessedMoveNumber = -1;
     const clean = this.cleanRoomCode(this.roomCode);
     const topic = `ownone/chess/v4/${clean}`;
 
-    // 1. Initialize Local BroadcastChannel for same-device instant testing
+    // 1. Local BroadcastChannel
     try {
       if (typeof BroadcastChannel !== 'undefined') {
         this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
@@ -81,7 +104,7 @@ class MultiplayerEngine {
       }
     } catch {}
 
-    // 2. Connect to Free Global Cloud WebSocket Relay (HiveMQ / EMQX)
+    // 2. Cloud WebSocket Relay
     try {
       await this.mqtt.connect(topic, (msg: MqttMessage) => {
         this.handleIncomingPayload(msg as any, playerName, 'cloud');
@@ -95,10 +118,6 @@ class MultiplayerEngine {
     return this.roomCode;
   }
 
-  /**
-   * Guest joins an existing room by code
-   * Connects to global cloud WebSocket relay and local BroadcastChannel with handshake
-   */
   public async joinRoom(
     code: string,
     playerName: string = 'Challenger (Guest)',
@@ -110,6 +129,7 @@ class MultiplayerEngine {
     this.roomCode = code.trim().toUpperCase();
     this.isHost = false;
     this.isConnecting = true;
+    this.lastProcessedMoveNumber = -1;
     const clean = this.cleanRoomCode(this.roomCode);
     const topic = `ownone/chess/v4/${clean}`;
 
@@ -135,7 +155,7 @@ class MultiplayerEngine {
         reject(new Error(message));
       };
 
-      // 1. Setup Local BroadcastChannel for local/multi-tab connection
+      // 1. Local BroadcastChannel
       try {
         if (typeof BroadcastChannel !== 'undefined') {
           this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
@@ -150,7 +170,7 @@ class MultiplayerEngine {
         }
       } catch {}
 
-      // 2. Connect to Cloud WebSocket Relay
+      // 2. Cloud WebSocket Relay
       try {
         await this.mqtt.connect(topic, (msg: MqttMessage) => {
           const payload = msg as any as MultiplayerPayload;
@@ -164,7 +184,7 @@ class MultiplayerEngine {
         console.warn('MQTT connect error:', err);
       }
 
-      // 3. Send Handshake ping immediately and retry every 600ms
+      // 3. Handshake ping retry loop
       const sendHandshake = () => {
         if (connected) return;
         const handshakePayload: MultiplayerPayload = {
@@ -174,25 +194,59 @@ class MultiplayerEngine {
           timeLimit: 600,
         };
 
-        // Send over local channel
         try {
           this.localChannel?.postMessage(handshakePayload);
         } catch {}
-
-        // Send over cloud relay
         this.mqtt.publish(handshakePayload);
       };
 
       sendHandshake();
       this.handshakeTimer = setInterval(sendHandshake, 600);
 
-      // 4. Watchdog: abort after 7 seconds if no response from host
+      // 4. Timeout watchdog: 12 seconds
       setTimeout(() => {
         if (!connected) {
           finishError(`Could not find active host in room "${code}". Ensure the host has created the room.`);
         }
-      }, 7000);
+      }, 12000);
     });
+  }
+
+  public async reconnect(
+    code: string,
+    playerName: string = 'Player',
+    role: 'host' | 'guest' = 'host',
+    callbacks?: MultiplayerCallbacks
+  ): Promise<boolean> {
+    this.leaveRoom();
+    if (callbacks) this.callbacks = { ...this.callbacks, ...callbacks };
+
+    this.roomCode = code.trim().toUpperCase();
+    this.isHost = role === 'host';
+    this.isConnected = true;
+    const clean = this.cleanRoomCode(this.roomCode);
+    const topic = `ownone/chess/v4/${clean}`;
+
+    // 1. Local BroadcastChannel
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        this.localChannel = new BroadcastChannel(`ownone_room_${clean}`);
+        this.localChannel.onmessage = (event) => {
+          this.handleIncomingPayload(event.data, playerName, 'local');
+        };
+      }
+    } catch {}
+
+    // 2. Cloud WebSocket Relay
+    try {
+      await this.mqtt.connect(topic, (msg: MqttMessage) => {
+        this.handleIncomingPayload(msg as any, playerName, 'cloud');
+      });
+      return true;
+    } catch (err) {
+      console.warn('Reconnect error:', err);
+      return false;
+    }
   }
 
   private handleIncomingPayload(
@@ -205,7 +259,6 @@ class MultiplayerEngine {
     if (msg.type === 'HANDSHAKE') {
       if (this.isHost) {
         this.isConnected = true;
-        // Host sends HANDSHAKE_ACK back to guest
         const ackPayload: MultiplayerPayload = {
           type: 'HANDSHAKE_ACK',
           name: myPlayerName,
@@ -232,12 +285,39 @@ class MultiplayerEngine {
   private dispatchPayload(msg: MultiplayerPayload) {
     switch (msg.type) {
       case 'MOVE':
+        // Edge Case Prevention: Prevent duplicate moves
+        if (msg.moveNumber !== undefined && msg.moveNumber <= this.lastProcessedMoveNumber) {
+          return;
+        }
+        if (msg.moveNumber !== undefined) {
+          this.lastProcessedMoveNumber = msg.moveNumber;
+        }
         this.callbacks.onMoveReceived?.(
           msg.from,
           msg.to,
           msg.promotion,
           msg.whiteTime,
-          msg.blackTime
+          msg.blackTime,
+          msg.moveNumber,
+          msg.fen
+        );
+        break;
+
+      case 'SYNC_REQUEST':
+        this.callbacks.onSyncRequested?.(msg.fromRole);
+        break;
+
+      case 'SYNC_STATE':
+        if (msg.moveNumber !== undefined) {
+          this.lastProcessedMoveNumber = Math.max(this.lastProcessedMoveNumber, msg.moveNumber);
+        }
+        this.callbacks.onSyncStateReceived?.(
+          msg.fen,
+          msg.history,
+          msg.whiteTime,
+          msg.blackTime,
+          msg.status,
+          msg.winner
         );
         break;
 
@@ -250,18 +330,20 @@ class MultiplayerEngine {
         break;
 
       case 'RESTART':
+        this.lastProcessedMoveNumber = -1;
         this.callbacks.onRestartRequested?.();
+        break;
+
+      case 'LEAVE':
+        this.callbacks.onOpponentLeft?.();
         break;
     }
   }
 
   private sendPayload(payload: MultiplayerPayload) {
-    // 1. Broadcast locally (for multi-tab / same browser testing)
     try {
       this.localChannel?.postMessage(payload);
     } catch {}
-
-    // 2. Broadcast over global cloud relay (for phones, remote PCs, etc.)
     this.mqtt.publish(payload);
   }
 
@@ -270,8 +352,11 @@ class MultiplayerEngine {
     to: Square,
     promotion: PieceType = 'q',
     whiteTime?: number,
-    blackTime?: number
+    blackTime?: number,
+    moveNumber: number = 0,
+    fen?: string
   ) {
+    this.lastProcessedMoveNumber = Math.max(this.lastProcessedMoveNumber, moveNumber);
     this.sendPayload({
       type: 'MOVE',
       from,
@@ -279,6 +364,35 @@ class MultiplayerEngine {
       promotion,
       whiteTime,
       blackTime,
+      moveNumber,
+      fen,
+    });
+  }
+
+  public sendSyncRequest(fromRole: 'host' | 'guest') {
+    this.sendPayload({
+      type: 'SYNC_REQUEST',
+      fromRole,
+    });
+  }
+
+  public sendSyncState(
+    fen: string,
+    history: MoveRecord[],
+    whiteTime: number,
+    blackTime: number,
+    status: GameStatus,
+    winner: Color | 'draw' | null
+  ) {
+    this.sendPayload({
+      type: 'SYNC_STATE',
+      fen,
+      history,
+      whiteTime,
+      blackTime,
+      status,
+      winner,
+      moveNumber: history.length,
     });
   }
 
@@ -298,8 +412,15 @@ class MultiplayerEngine {
   }
 
   public sendRestart() {
+    this.lastProcessedMoveNumber = -1;
     this.sendPayload({
       type: 'RESTART',
+    });
+  }
+
+  public sendLeave() {
+    this.sendPayload({
+      type: 'LEAVE',
     });
   }
 
@@ -319,6 +440,7 @@ class MultiplayerEngine {
     this.isHost = false;
     this.isConnected = false;
     this.isConnecting = false;
+    this.lastProcessedMoveNumber = -1;
   }
 
   public getIsConnected(): boolean {

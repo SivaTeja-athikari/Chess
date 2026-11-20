@@ -17,17 +17,17 @@ export const ChessPiece2D: React.FC<ChessPiece2DProps> = ({
   className = '',
 }) => {
   const isWhite = color === 'w';
+  const uid = React.useId().replace(/:/g, '');
 
-  // Master Palette
-  const bodyGradId = isWhite ? 'white-master-body' : 'black-master-body';
-  const trimGradId = isWhite ? 'gold-trim-grad' : 'silver-trim-grad';
-  const shadowGradId = isWhite ? 'white-inner-shadow' : 'black-inner-shadow';
+  // Master Palette with Instance-Scoped Unique Gradient IDs
+  const bodyGradId = `${uid}-${isWhite ? 'white' : 'black'}-body`;
+  const trimGradId = `${uid}-${isWhite ? 'gold' : 'silver'}-trim`;
 
-  const strokeMain = isWhite ? '#855b14' : '#090d16';
-  const strokeInner = isWhite ? 'rgba(212, 175, 55, 0.6)' : 'rgba(148, 163, 184, 0.35)';
-  const highlightGlint = isWhite ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.35)';
+  const strokeMain = isWhite ? '#78350f' : '#0a0f1d';
+  const strokeInner = isWhite ? 'rgba(212, 175, 55, 0.7)' : 'rgba(226, 232, 240, 0.6)';
+  const highlightGlint = isWhite ? 'rgba(255, 255, 255, 0.95)' : 'rgba(255, 255, 255, 0.55)';
   const accentGold = '#d4af37';
-  const accentPlatinum = '#cbd5e1';
+  const accentPlatinum = '#e2e8f0';
   const gemColor = isWhite ? accentGold : accentPlatinum;
 
   const renderPieceSvg = () => {
@@ -472,15 +472,15 @@ export const ChessPiece2D: React.FC<ChessPiece2DProps> = ({
           {/* ============================================================
            *  WHITE PIECE LUXURY PALETTE (Polished Imperial Ivory & Gold)
            * ============================================================ */}
-          <linearGradient id="white-master-body" x1="15%" y1="0%" x2="85%" y2="100%">
+          <linearGradient id={`${uid}-white-body`} x1="15%" y1="0%" x2="85%" y2="100%">
             <stop offset="0%" stopColor="#ffffff" />
             <stop offset="35%" stopColor="#fdfaf3" />
-            <stop offset="70%" stopColor="#f3ecdb" />
-            <stop offset="90%" stopColor="#e2d4bc" />
-            <stop offset="100%" stopColor="#cfbe9f" />
+            <stop offset="70%" stopColor="#f5eedc" />
+            <stop offset="90%" stopColor="#e8dcbe" />
+            <stop offset="100%" stopColor="#d5c29a" />
           </linearGradient>
 
-          <linearGradient id="gold-trim-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id={`${uid}-gold-trim`} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#fffbeb" />
             <stop offset="30%" stopColor="#fef08a" />
             <stop offset="70%" stopColor="#d4af37" />
@@ -490,26 +490,20 @@ export const ChessPiece2D: React.FC<ChessPiece2DProps> = ({
           {/* ============================================================
            *  BLACK PIECE LUXURY PALETTE (Forged Damascus Obsidian & Platinum)
            * ============================================================ */}
-          <linearGradient id="black-master-body" x1="15%" y1="0%" x2="85%" y2="100%">
-            <stop offset="0%" stopColor="#384357" />
-            <stop offset="35%" stopColor="#252d3c" />
-            <stop offset="70%" stopColor="#151a24" />
-            <stop offset="90%" stopColor="#0b0e14" />
-            <stop offset="100%" stopColor="#05070a" />
+          <linearGradient id={`${uid}-black-body`} x1="15%" y1="0%" x2="85%" y2="100%">
+            <stop offset="0%" stopColor="#4b5563" />
+            <stop offset="25%" stopColor="#374151" />
+            <stop offset="60%" stopColor="#1f2937" />
+            <stop offset="85%" stopColor="#111827" />
+            <stop offset="100%" stopColor="#0b0f19" />
           </linearGradient>
 
-          <linearGradient id="silver-trim-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+          <linearGradient id={`${uid}-silver-trim`} x1="0%" y1="0%" x2="100%" y2="100%">
             <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="40%" stopColor="#cbd5e1" />
-            <stop offset="80%" stopColor="#64748b" />
-            <stop offset="100%" stopColor="#334155" />
+            <stop offset="35%" stopColor="#e2e8f0" />
+            <stop offset="70%" stopColor="#94a3b8" />
+            <stop offset="100%" stopColor="#475569" />
           </linearGradient>
-
-          {/* Radial Ambient Occlusion for Crown Bases */}
-          <radialGradient id="piece-radial-ambient" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(0,0,0,0)" />
-            <stop offset="100%" stopColor="rgba(0,0,0,0.3)" />
-          </radialGradient>
         </defs>
 
         {renderPieceSvg()}

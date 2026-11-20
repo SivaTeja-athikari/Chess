@@ -397,7 +397,7 @@ export const Chessboard3D: React.FC = () => {
   const { activeCombat } = useChessStore();
 
   return (
-    <div className="relative aspect-square w-[min(90vw,calc(100vh-215px),640px)] h-[min(90vw,calc(100vh-215px),640px)] xl:w-[min(90vw,calc(100vh-205px),680px)] xl:h-[min(90vw,calc(100vh-205px),680px)] 2xl:w-[min(90vw,calc(100vh-195px),720px)] 2xl:h-[min(90vw,calc(100vh-195px),720px)] rounded-2xl overflow-hidden shadow-luxury border border-amber-900/50 bg-gradient-to-b from-[#12141a] to-[#0a0b0e]">
+    <div className="relative aspect-square w-[min(90vw,calc(100vh-245px),580px)] h-[min(90vw,calc(100vh-245px),580px)] xl:w-[min(90vw,calc(100vh-240px),620px)] xl:h-[min(90vw,calc(100vh-240px),620px)] 2xl:w-[min(90vw,calc(100vh-235px),660px)] 2xl:h-[min(90vw,calc(100vh-235px),660px)] rounded-2xl overflow-hidden shadow-luxury border border-amber-900/50 bg-gradient-to-b from-[#12141a] to-[#0a0b0e]">
       {/* 3D Cinematic Floating Action Badge */}
       {activeCombat && combatProgress !== null && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none transition-all duration-200">

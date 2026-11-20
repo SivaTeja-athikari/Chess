@@ -102,7 +102,16 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
     setStatusMessage('Connecting to host room...');
 
     try {
-      const code = joinCodeInput.toUpperCase().replace(/\s+/g, '');
+      const raw = joinCodeInput.trim().toUpperCase().replace(/\s+/g, '');
+      let code = raw;
+      if (!code.startsWith('GM-')) {
+        if (code.startsWith('GM')) {
+          code = `GM-${code.replace('GM', '').replace(/^-/, '')}`;
+        } else if (/^\d{4}$/.test(code)) {
+          code = `GM-${code}`;
+        }
+      }
+
       const success = await joinMultiplayerRoom(code);
       if (success) {
         confetti({ particleCount: 80, spread: 65, origin: { y: 0.6 } });
