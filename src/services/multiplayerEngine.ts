@@ -2,8 +2,8 @@ import { Square, PieceType, Color, MoveRecord, GameStatus } from '../types/chess
 import { MqttRelay, MqttMessage } from './mqttRelay';
 
 export type MultiplayerPayload =
-  | { type: 'HANDSHAKE'; name: string; color: Color; timeLimit: number }
-  | { type: 'HANDSHAKE_ACK'; name: string; color: Color }
+  | { type: 'HANDSHAKE'; name: string; color: Color; timeLimit: number | null }
+  | { type: 'HANDSHAKE_ACK'; name: string; color: Color; timeLimit: number | null }
   | {
       type: 'MOVE';
       from: Square;
@@ -24,15 +24,17 @@ export type MultiplayerPayload =
       status: GameStatus;
       winner: Color | 'draw' | null;
       moveNumber: number;
+      timeLimit: number | null;
     }
   | { type: 'SYNC_CLOCK'; whiteTime: number; blackTime: number }
+  | { type: 'TIME_CONTROL'; timeLimit: number | null }
   | { type: 'RESIGN'; color: Color }
   | { type: 'RESTART' }
   | { type: 'LEAVE' }
   | { type: 'PING' };
 
 interface MultiplayerCallbacks {
-  onConnected?: (peerId: string, opponentName: string, role: 'host' | 'guest') => void;
+  onConnected?: (peerId: string, opponentName: string, role: 'host' | 'guest', timeLimit?: number | null) => void;
   onMoveReceived?: (
     from: Square,
     to: Square,
@@ -49,8 +51,10 @@ interface MultiplayerCallbacks {
     whiteTime: number,
     blackTime: number,
     status: GameStatus,
-    winner: Color | 'draw' | null
+    winner: Color | 'draw' | null,
+    timeLimit: number | null
   ) => void;
+  onTimeControlReceived?: (timeLimit: number | null) => void;
   onClockSync?: (whiteTime: number, blackTime: number) => void;
   onOpponentResigned?: (color: Color) => void;
   onRestartRequested?: () => void;
@@ -67,6 +71,7 @@ class MultiplayerEngine {
   private isHost: boolean = false;
   private isConnected: boolean = false;
   private isConnecting: boolean = false;
+  private timeLimit: number | null = 600;
   private handshakeTimer: any = null;
   private lastProcessedMoveNumber: number = -1;
 
@@ -89,6 +94,7 @@ class MultiplayerEngine {
 
     this.roomCode = code.trim().toUpperCase();
     this.isHost = true;
+    this.timeLimit = timeLimit;
     this.isConnecting = true;
     this.lastProcessedMoveNumber = -1;
     const clean = this.cleanRoomCode(this.roomCode);
@@ -136,13 +142,13 @@ class MultiplayerEngine {
     return new Promise(async (resolve, reject) => {
       let connected = false;
 
-      const finishSuccess = (hostName: string) => {
+      const finishSuccess = (hostName: string, hostTimeLimit: number | null) => {
         if (connected) return;
         connected = true;
         this.isConnected = true;
         this.isConnecting = false;
         if (this.handshakeTimer) clearInterval(this.handshakeTimer);
-        this.callbacks.onConnected?.(this.roomCode!, hostName || 'Host Grandmaster', 'guest');
+        this.callbacks.onConnected?.(this.roomCode!, hostName || 'Host Grandmaster', 'guest', hostTimeLimit);
         resolve(true);
       };
 
@@ -162,7 +168,7 @@ class MultiplayerEngine {
           this.localChannel.onmessage = (event) => {
             const data = event.data as MultiplayerPayload;
             if (data?.type === 'HANDSHAKE_ACK') {
-              finishSuccess(data.name);
+              finishSuccess(data.name, data.timeLimit);
             } else {
               this.dispatchPayload(data);
             }
@@ -175,7 +181,7 @@ class MultiplayerEngine {
         await this.mqtt.connect(topic, (msg: MqttMessage) => {
           const payload = msg as any as MultiplayerPayload;
           if (payload?.type === 'HANDSHAKE_ACK') {
-            finishSuccess(payload.name);
+            finishSuccess(payload.name, payload.timeLimit);
           } else {
             this.dispatchPayload(payload);
           }
@@ -191,7 +197,7 @@ class MultiplayerEngine {
           type: 'HANDSHAKE',
           name: playerName,
           color: 'b',
-          timeLimit: 600,
+          timeLimit: null,
         };
 
         try {
@@ -223,6 +229,7 @@ class MultiplayerEngine {
 
     this.roomCode = code.trim().toUpperCase();
     this.isHost = role === 'host';
+    this.timeLimit = null;
     this.isConnected = true;
     const clean = this.cleanRoomCode(this.roomCode);
     const topic = `ownone/chess/v4/${clean}`;
@@ -263,6 +270,7 @@ class MultiplayerEngine {
           type: 'HANDSHAKE_ACK',
           name: myPlayerName,
           color: 'w',
+          timeLimit: this.timeLimit,
         };
 
         if (source === 'local') {
@@ -272,11 +280,11 @@ class MultiplayerEngine {
         }
         this.mqtt.publish(ackPayload);
 
-        this.callbacks.onConnected?.(this.roomCode!, msg.name, 'host');
+        this.callbacks.onConnected?.(this.roomCode!, msg.name, 'host', this.timeLimit);
       }
     } else if (msg.type === 'HANDSHAKE_ACK') {
       this.isConnected = true;
-      this.callbacks.onConnected?.(this.roomCode!, msg.name, 'guest');
+      this.callbacks.onConnected?.(this.roomCode!, msg.name, 'guest', msg.timeLimit);
     } else {
       this.dispatchPayload(msg);
     }
@@ -317,12 +325,17 @@ class MultiplayerEngine {
           msg.whiteTime,
           msg.blackTime,
           msg.status,
-          msg.winner
+          msg.winner,
+          msg.timeLimit
         );
         break;
 
       case 'SYNC_CLOCK':
         this.callbacks.onClockSync?.(msg.whiteTime, msg.blackTime);
+        break;
+
+      case 'TIME_CONTROL':
+        this.callbacks.onTimeControlReceived?.(msg.timeLimit);
         break;
 
       case 'RESIGN':
@@ -382,7 +395,8 @@ class MultiplayerEngine {
     whiteTime: number,
     blackTime: number,
     status: GameStatus,
-    winner: Color | 'draw' | null
+    winner: Color | 'draw' | null,
+    timeLimit: number | null
   ) {
     this.sendPayload({
       type: 'SYNC_STATE',
@@ -393,6 +407,7 @@ class MultiplayerEngine {
       status,
       winner,
       moveNumber: history.length,
+      timeLimit,
     });
   }
 
@@ -402,6 +417,11 @@ class MultiplayerEngine {
       whiteTime,
       blackTime,
     });
+  }
+
+  public sendTimeControl(timeLimit: number | null) {
+    this.timeLimit = timeLimit;
+    this.sendPayload({ type: 'TIME_CONTROL', timeLimit });
   }
 
   public sendResign(color: Color) {
@@ -440,6 +460,7 @@ class MultiplayerEngine {
     this.isHost = false;
     this.isConnected = false;
     this.isConnecting = false;
+    this.timeLimit = 600;
     this.lastProcessedMoveNumber = -1;
   }
 

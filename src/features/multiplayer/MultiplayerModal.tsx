@@ -13,7 +13,8 @@ import {
   Smartphone, 
   Sparkles,
   ShieldCheck,
-  ExternalLink
+  ExternalLink,
+  Clock
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
@@ -26,6 +27,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
   const { 
     multiplayerRoom, 
     createMultiplayerRoom, 
+    setMultiplayerTimeLimit,
     joinMultiplayerRoom, 
     leaveMultiplayerRoom,
     setGameMode,
@@ -39,6 +41,18 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
   const [isJoining, setIsJoining] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [multiplayerTimeLimit, setMultiplayerTimeLimitState] = useState<number | null>(
+    multiplayerRoom?.timeLimit ?? 600
+  );
+
+  const TIME_PRESETS: { label: string; seconds: number | null }[] = [
+    { label: '1m Bullet', seconds: 60 },
+    { label: '3m Blitz', seconds: 180 },
+    { label: '5m Blitz', seconds: 300 },
+    { label: '10m Rapid', seconds: 600 },
+    { label: '30m Classical', seconds: 1800 },
+    { label: 'Unlimited', seconds: null },
+  ];
 
   // Auto-detect room parameter from URL query string on open
   useEffect(() => {
@@ -74,7 +88,7 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
     : `https://chess.ownone.app/?room=${currentCode}`;
 
   const handleCreateNewRoom = () => {
-    const code = createMultiplayerRoom();
+    const code = createMultiplayerRoom(multiplayerTimeLimit ?? undefined);
     setStatusMessage(`New room ${code} ready. Share the link or code with your friend.`);
   };
 
@@ -216,6 +230,34 @@ export const MultiplayerModal: React.FC<MultiplayerModalProps> = ({ isOpen, onCl
                 <span className="text-xs text-stone-400 uppercase tracking-widest font-mono mb-2">
                   Shareable Room Code
                 </span>
+
+                <div className="w-full mb-4 text-left">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-stone-300 uppercase tracking-wider mb-2">
+                    <Clock className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Match Timer</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {TIME_PRESETS.map((preset) => (
+                      <button
+                        key={preset.label}
+                        disabled={isRoomPlaying}
+                        onClick={() => {
+                          setMultiplayerTimeLimitState(preset.seconds);
+                          setMultiplayerTimeLimit(preset.seconds);
+                          setStatusMessage(`${preset.label} selected for both players.`);
+                        }}
+                        className={`py-2 px-1 rounded-lg border text-[10px] font-bold transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
+                          multiplayerTimeLimit === preset.seconds
+                            ? 'border-sky-400 bg-sky-500/20 text-sky-300'
+                            : 'border-stone-800 bg-stone-950/70 text-stone-400 hover:border-stone-700'
+                        }`}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-stone-500 mt-2">The host controls the clock setting. It is sent to every connected device.</p>
+                </div>
                 
                 {/* Large Room Code Display */}
                 <div className="flex items-center gap-2 mb-3">

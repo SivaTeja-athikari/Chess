@@ -57,6 +57,7 @@ interface ChessState {
   // Online Multiplayer
   multiplayerRoom: MultiplayerRoom | null;
   createMultiplayerRoom: (timeLimit?: number) => string;
+  setMultiplayerTimeLimit: (timeLimit: number | null) => void;
   joinMultiplayerRoom: (code: string) => Promise<boolean>;
   leaveMultiplayerRoom: () => void;
 
@@ -183,6 +184,7 @@ export const useChessStore = create<ChessState>((set, get) => {
   let initialWinner: Color | 'draw' | null = null;
   let initialWhiteTime = 600;
   let initialBlackTime = 600;
+  let initialTimeLimit: number | null = 600;
   let initialGameMode: GameMode = 'pve';
   let initialOrientation: Color = 'w';
   let initialMultiplayerRoom: MultiplayerRoom | null = null;
@@ -195,6 +197,7 @@ export const useChessStore = create<ChessState>((set, get) => {
       initialWinner = savedSession.winner || null;
       initialWhiteTime = savedSession.whiteTime ?? 600;
       initialBlackTime = savedSession.blackTime ?? 600;
+      initialTimeLimit = savedSession.timeLimit;
       initialGameMode = 'pvp-online';
       initialOrientation = savedSession.playerColor;
       initialMultiplayerRoom = {
@@ -203,7 +206,7 @@ export const useChessStore = create<ChessState>((set, get) => {
         opponentName: savedSession.role === 'host' ? (savedSession.opponentName || 'Challenger') : 'You (Black)',
         status: savedSession.status === 'idle' ? 'waiting' : 'playing',
         playerColor: savedSession.playerColor,
-        timeLimit: savedSession.timeLimit || 600,
+        timeLimit: savedSession.timeLimit,
       };
     } catch (e) {
       console.warn('Error hydrating saved session:', e);
@@ -216,7 +219,8 @@ export const useChessStore = create<ChessState>((set, get) => {
     myRole: 'host' | 'guest',
     myColor: Color
   ) => ({
-    onConnected: (_id: string, opponentName: string) => {
+    onConnected: (_id: string, opponentName: string, _role: 'host' | 'guest', hostTimeLimit?: number | null) => {
+      const negotiatedTimeLimit = hostTimeLimit === undefined ? get().timeLimit : hostTimeLimit;
       set((s) => ({
         multiplayerRoom: s.multiplayerRoom
           ? { ...s.multiplayerRoom, status: 'playing', opponentName }
@@ -235,6 +239,9 @@ export const useChessStore = create<ChessState>((set, get) => {
           rating: 1850,
           country: 'Guest',
         },
+        timeLimit: negotiatedTimeLimit,
+        whiteTime: negotiatedTimeLimit ?? 600,
+        blackTime: negotiatedTimeLimit ?? 600,
       }));
       const current = get();
       multiplayerSession.save({
@@ -251,6 +258,16 @@ export const useChessStore = create<ChessState>((set, get) => {
         winner: current.winner,
       });
       confetti({ particleCount: 75, spread: 65 });
+    },
+    onTimeControlReceived: (newTimeLimit: number | null) => {
+      set({
+        timeLimit: newTimeLimit,
+        whiteTime: newTimeLimit ?? 600,
+        blackTime: newTimeLimit ?? 600,
+        multiplayerRoom: get().multiplayerRoom
+          ? { ...get().multiplayerRoom!, timeLimit: newTimeLimit }
+          : null,
+      });
     },
     onMoveReceived: (
       from: Square,
@@ -276,7 +293,8 @@ export const useChessStore = create<ChessState>((set, get) => {
         s.whiteTime,
         s.blackTime,
         s.status,
-        s.winner
+        s.winner,
+        s.timeLimit
       );
     },
     onSyncStateReceived: (
@@ -285,7 +303,8 @@ export const useChessStore = create<ChessState>((set, get) => {
       wt: number,
       bt: number,
       status: GameStatus,
-      winner: Color | 'draw' | null
+      winner: Color | 'draw' | null,
+      syncedTimeLimit: number | null
     ) => {
       try {
         const restoredGame = new Chess(fen);
@@ -300,6 +319,10 @@ export const useChessStore = create<ChessState>((set, get) => {
           blackTime: bt,
           status,
           winner,
+          timeLimit: syncedTimeLimit,
+          multiplayerRoom: get().multiplayerRoom
+            ? { ...get().multiplayerRoom!, timeLimit: syncedTimeLimit }
+            : null,
           capturedPieces: calculateCapturedPieces(restoredGame),
           isTimerActive: !restoredGame.isGameOver() && status !== 'idle',
         });
@@ -431,6 +454,19 @@ export const useChessStore = create<ChessState>((set, get) => {
       return code;
     },
 
+    setMultiplayerTimeLimit: (newTimeLimit: number | null) => {
+      const room = get().multiplayerRoom;
+      if (!room || room.playerColor !== 'w' || room.status !== 'waiting') return;
+
+      set({
+        timeLimit: newTimeLimit,
+        whiteTime: newTimeLimit ?? 600,
+        blackTime: newTimeLimit ?? 600,
+        multiplayerRoom: { ...room, timeLimit: newTimeLimit },
+      });
+      multiplayer.sendTimeControl(newTimeLimit);
+    },
+
     joinMultiplayerRoom: async (code: string) => {
       if (!code || code.length < 4) return false;
       const room: MultiplayerRoom = {
@@ -457,18 +493,19 @@ export const useChessStore = create<ChessState>((set, get) => {
           createMultiplayerHandlers(code, 'guest', 'b')
         );
         if (success) {
+          const current = get();
           multiplayerSession.save({
             roomCode: code,
             playerColor: 'b',
             role: 'guest',
             opponentName: 'Host Player',
-            fen: new Chess().fen(),
-            history: [],
-            whiteTime: 600,
-            blackTime: 600,
-            timeLimit: 600,
-            status: 'idle',
-            winner: null,
+            fen: current.game.fen(),
+            history: current.history,
+            whiteTime: current.whiteTime,
+            blackTime: current.blackTime,
+            timeLimit: current.timeLimit,
+            status: current.status,
+            winner: current.winner,
           });
         }
         return success;
@@ -485,7 +522,7 @@ export const useChessStore = create<ChessState>((set, get) => {
       get().setGameMode('pve');
     },
 
-    timeLimit: initialWhiteTime,
+    timeLimit: initialTimeLimit,
     whiteTime: initialWhiteTime,
     blackTime: initialBlackTime,
     isTimerActive: initialStatus === 'in_progress' || initialStatus === 'check',
@@ -1077,8 +1114,11 @@ export const useChessStore = create<ChessState>((set, get) => {
     },
 
     decrementTimer: (color: Color) => {
-      const { whiteTime, blackTime, isTimerActive } = get();
+      const { whiteTime, blackTime, isTimerActive, gameMode } = get();
       if (!isTimerActive) return;
+      // The host is the single clock authority. Guests receive clock snapshots so
+      // both devices show the same remaining time instead of drifting separately.
+      if (gameMode === 'pvp-online' && !multiplayer.getIsHost()) return;
 
       if (color === 'w') {
         const newTime = Math.max(0, whiteTime - 1);
@@ -1093,6 +1133,22 @@ export const useChessStore = create<ChessState>((set, get) => {
         if (newTime === 0) {
           set({ status: 'timeout', winner: 'w', isTimerActive: false });
           sound.playCheckmate();
+        }
+      }
+
+      if (gameMode === 'pvp-online' && multiplayer.getIsHost()) {
+        const current = get();
+        multiplayer.sendClockSync(current.whiteTime, current.blackTime);
+        if (current.status === 'timeout') {
+          multiplayer.sendSyncState(
+            current.game.fen(),
+            current.history,
+            current.whiteTime,
+            current.blackTime,
+            current.status,
+            current.winner,
+            current.timeLimit
+          );
         }
       }
     },
